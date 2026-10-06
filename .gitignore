@@ -1,0 +1,16 @@
+.build/
+.swiftpm/
+.DS_Store
+.env
+.env.*
+!.env.example
+*.app/
+*.dmg
+*.pkg
+*.xcarchive/
+*.xcuserstate
+xcuserdata/
+coverage/
+DerivedData/
+inventory.json
+*.log
