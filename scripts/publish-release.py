@@ -100,10 +100,13 @@ def main():
         raise SystemExit('The signed feed does not point to the immutable release archive.')
     # Verify using the release signing identity from Keychain.
     run(tools / 'sign_update', '--verify', archive, enclosure.get(SPARKLE + 'edSignature'), '--account', 'agency.ziplyne.grove.updates')
-    existing = subprocess.run(['gh', 'release', 'view', tag, '--repo', REPO, '--json', 'isDraft'],
+    existing = subprocess.run(['gh', 'release', 'view', tag, '--repo', REPO, '--json', 'isDraft,targetCommitish'],
                               capture_output=True, text=True, timeout=60)
     if existing.returncode == 0:
-        if not json.loads(existing.stdout)['isDraft']:
+        release = json.loads(existing.stdout)
+        if release['targetCommitish'] != head:
+            raise SystemExit('Existing draft targets different source. Review it and update its target before publishing.')
+        if not release['isDraft']:
             raise SystemExit('This release is already published; published assets are immutable.')
     elif 'release not found' in existing.stderr.lower() or 'not found' in existing.stderr.lower():
         run('gh', 'release', 'create', tag, '--repo', REPO, '--target', head, '--draft',
