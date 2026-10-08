@@ -1,6 +1,44 @@
 import Foundation
 
 public enum ServiceCatalog {
+    /// Model output never supplies a URL. Only reviewed catalog entries can become scan links.
+    public static func discoveredService(name: String, evidence: String) -> (name: String, provider: ServiceProvider, url: String)? {
+        let value = (name + " " + evidence).lowercased()
+        let entries: [(String, ServiceProvider, String, [String])] = [
+            ("Neon", .custom, "https://console.neon.tech/", ["neon", "@neondatabase/"]),
+            ("Stripe", .custom, "https://dashboard.stripe.com/", ["stripe", "@stripe/"]),
+            ("Supabase", .custom, "https://supabase.com/dashboard", ["supabase", "@supabase/"])
+        ] + ServiceProvider.allCases.filter { $0 != .custom }.map {
+            ($0.title, $0, homepage($0), [$0.title.lowercased(), $0.rawValue.lowercased()])
+        }
+        // Prefer the dependency evidence when it identifies a provider, then its reported name.
+        for text in [evidence.lowercased(), value] {
+            let matches = entries.compactMap { entry -> (String.Index, String, ServiceProvider, String)? in
+                let positions = entry.3.compactMap { alias in
+                    text.range(of: "(?<![a-z0-9])" + NSRegularExpression.escapedPattern(for: alias) + (alias.hasSuffix("/") ? "" : "(?![a-z0-9])"), options: .regularExpression)?.lowerBound
+                }
+                guard let first = positions.min() else { return nil }
+                return (first, entry.0, entry.1, entry.2)
+            }
+            if let match = matches.min(by: { $0.0 < $1.0 }) { return (match.1, match.2, match.3) }
+        }
+        return nil
+    }
+    public static func homepage(_ provider: ServiceProvider) -> String {
+        switch provider {
+        case .expo: "https://expo.dev/"
+        case .oneSignal: "https://dashboard.onesignal.com/"
+        case .searchConsole: "https://search.google.com/search-console/"
+        case .cloudflare: "https://dash.cloudflare.com/"
+        case .vercel: "https://vercel.com/dashboard"
+        case .revenueCat: "https://app.revenuecat.com/"
+        case .sentry: "https://sentry.io/"
+        case .analytics: "https://analytics.google.com/"
+        case .appStore: "https://appstoreconnect.apple.com/"
+        case .googlePlay: "https://play.google.com/console/"
+        case .custom: ""
+        }
+    }
     public static func component(_ value: String) -> String {
         value.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-_.~"))) ?? ""
     }

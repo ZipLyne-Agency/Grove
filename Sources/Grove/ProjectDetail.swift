@@ -12,16 +12,15 @@ struct ProjectDetailView: View {
     }
     private var services: [ServiceConnection] { workspace.connections(for: project) }
     var body: some View {
-        let attention = services.filter { ServiceLook($0, syncing: false).attention }
         VStack(spacing: 0) {
-            header(attention: attention.count)
+            header()
             DetailTabs(tabs: ProjectTab.allCases, selection: Binding(get: { workspace.projectTab }, set: { workspace.projectTab = $0 }),
                        counts: [.services: services.count])
                 .padding(.top, 16)
             ScrollView {
                 Group {
                     switch workspace.projectTab {
-                    case .overview: overview(attention: attention)
+                    case .overview: overview()
                     case .services: servicesTab
                     case .activity: ActivityList(items: ActivityFeed.items(connections: services, repositories: repos))
                     case .settings: ProjectSettingsForm(store: store, ui: ui, project: project)
@@ -36,7 +35,7 @@ struct ProjectDetailView: View {
         .background(Color.inspector)
     }
 
-    private func header(attention: Int) -> some View {
+    private func header() -> some View {
         HStack(alignment: .top, spacing: 12) {
             ProjectTile(project: project, size: 40)
             VStack(alignment: .leading, spacing: 3) {
@@ -44,7 +43,6 @@ struct ProjectDetailView: View {
                     .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
                 HStack(spacing: 4) {
                     Text("\(countLabel(repos.count, "Repository", "Repositories")) · \(countLabel(services.count, "Service", "Services"))").foregroundStyle(.secondary)
-                    if attention > 0 { Text("· \(attention.formatted()) Need Attention").fontWeight(.semibold).foregroundStyle(Color.danger) }
                 }
                 .font(.system(size: 12)).lineLimit(1)
             }
@@ -71,30 +69,8 @@ struct ProjectDetailView: View {
         store.assistantFocus = .library; store.assistantProjectID = project.id; store.assistantOwner = nil; store.showAssistant = true
     }
 
-    private func overview(attention: [ServiceConnection]) -> some View {
+    private func overview() -> some View {
         VStack(alignment: .leading, spacing: 20) {
-            if let first = attention.first {
-                HStack(spacing: 9) {
-                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Color.caution).accessibilityHidden(true)
-                    Group {
-                        if attention.count == 1 {
-                            Text("\(first.provider.title) · \(first.name): ").fontWeight(.semibold) + Text(ServiceLook(first, syncing: false).line)
-                        } else {
-                            Text("\(attention.count.formatted()) Services Need Attention").fontWeight(.semibold)
-                        }
-                    }
-                    .font(.system(size: 12.5)).lineLimit(2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    if attention.count == 1 {
-                        Button("Open Connection") { workspace.destination = .connections; workspace.selectedConnectionID = first.id; ui.selectedAccountID = nil }
-                    } else {
-                        Button("Show Services") { workspace.projectTab = .services }
-                    }
-                }
-                .controlSize(.small)
-                .padding(.horizontal, 12).padding(.vertical, 9)
-                .background(Color.caution.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            }
             DetailSection(title: "Notes") {
                 if project.notes.isEmpty {
                     Button("Add Notes…") { workspace.projectTab = .settings }.buttonStyle(.link).font(.system(size: 12))
@@ -144,32 +120,24 @@ struct ProjectDetailView: View {
 
     private var servicesTab: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                Text(summary).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+            HStack {
+                Text(countLabel(services.count, "Service", "Services")).font(.system(size: 12)).foregroundStyle(.secondary)
                 Spacer()
-                Button("Ask About These Services") {
-                    store.requestProjectAssistant("Summarize the connected services for this project. Say which are verified, out of date, failing, or only saved links.", project: project)
+                if repos.count == 1, let repo = repos.first {
+                    Button("Find Services") { ui.sheet = .discover(repo) }.disabled(!workspace.canEdit)
+                } else {
+                    Menu("Find Services") {
+                        ForEach(repos) { repo in Button(repo.name) { ui.sheet = .discover(repo) } }
+                    }.disabled(repos.isEmpty || !workspace.canEdit)
                 }
-                .disabled(!Intelligence.available || store.assistantBusy || !store.canStartReview || services.isEmpty)
-                Button("Sync Now") { for connection in services where connection.accountID != nil { workspace.requestSync(connection.id) } }
-                    .disabled(!workspace.canEdit || !services.contains { $0.accountID != nil })
-                Button("Add Connection") { addConnection() }.buttonStyle(.borderedProminent).disabled(!workspace.canEdit)
+                Button("Add Service") { addConnection() }.buttonStyle(.borderedProminent).disabled(!workspace.canEdit)
             }
             .controlSize(.small)
-            ServiceGrid(store: store, ui: ui, connections: services, context: .project(project.id), usedBy: usedBy) { addConnection() }
+            ServiceList(store: store, ui: ui, connections: services, context: .project(project.id)) { addConnection() }
         }
     }
-
     private func addConnection() {
-        ui.sheet = .editConnection(ServiceConnection(provider: .vercel, name: "", projectIDs: [project.id]), isNew: true)
-    }
-
-    private var summary: String {
-        let statuses = services.map { $0.status() }
-        let verified = statuses.filter { $0 == .verified || $0 == .stale }.count
-        let links = statuses.filter { $0 == .savedLink }.count
-        let suggested = statuses.filter { $0 == .suggested }.count
-        return "\(verified.formatted()) Verified · \(links.formatted()) Saved \(links == 1 ? "Link" : "Links") · \(suggested.formatted()) Suggested"
+        ui.sheet = .editConnection(ServiceConnection(provider: .custom, name: "", projectIDs: [project.id]), isNew: true)
     }
 
     private func usedBy(_ connection: ServiceConnection) -> String? {

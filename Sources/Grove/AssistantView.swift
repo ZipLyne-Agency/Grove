@@ -209,7 +209,7 @@ struct AssistantView: View {
                         ProviderTile(provider: connection.provider, size: 20)
                         VStack(alignment: .leading, spacing: 1) {
                             Text("\(connection.provider.title) · \(connection.name)").font(.system(size: 11.5, weight: .semibold)).lineLimit(1)
-                            Text("\(connection.status().rawValue) · \(connection.snapshot.map { "Checked \(GroveDates.short($0.checkedAt))" } ?? "Not Checked")")
+                            Text(connection.dashboardURL)
                                 .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                         }
                         Spacer(minLength: 0)

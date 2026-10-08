@@ -167,7 +167,7 @@ struct InspectorView: View {
 
     private func secondary(_ repo: Repository, services: [ServiceConnection]) -> some View {
         VStack(alignment: .leading, spacing: 20) {
-            DetailSection(title: "Services", caption: services.compactMap { $0.snapshot?.checkedAt }.max().map { "Checked \(GroveDates.named($0))" }) {
+            DetailSection(title: "Services") {
                 if services.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("No Services Yet").font(.system(size: 12, weight: .semibold))
@@ -195,8 +195,8 @@ struct InspectorView: View {
     }
 
     @ViewBuilder private func emptyServiceActions(_ repo: Repository) -> some View {
-        Button("Discover Services") { ui.sheet = .discover(repo) }.fixedSize()
-        Button("Add Connection") { ui.sheet = .editConnection(ServiceConnection(provider: .vercel, name: "", repositoryIDs: [repo.id]), isNew: true) }.fixedSize()
+        Button("Find Services") { ui.sheet = .discover(repo) }.fixedSize()
+        Button("Add Service") { ui.sheet = .editConnection(ServiceConnection(provider: .custom, name: "", repositoryIDs: [repo.id]), isNew: true) }.fixedSize()
     }
 
     private func projectChips(_ repo: Repository) -> some View {

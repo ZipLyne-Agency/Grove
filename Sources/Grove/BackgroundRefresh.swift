@@ -59,7 +59,7 @@ final class BackgroundRefresh {
             failures = store.message == nil ? 0 : min(failures + 1, 3)
         }
         guard !stopped, !Task.isCancelled, store.canStartReview else { return }
-        await store.workspace.syncAll()
+
     }
     func stop() {
         stopped = true

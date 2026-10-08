@@ -24,7 +24,7 @@ The debug-only `--keep-quick-access-open` argument keeps Quick Access open and a
 
 Every GitHub change needs an explicit review. AI output can propose one change but cannot execute it. Keep approvals bound to immutable repository identity and a single preview, consumed once before asynchronous work. Preserve live account and permission checks, typed-name transfer and deletion confirmation, expiry, and the refresh requirement after an uncertain result.
 
-Provider renames need their own one-use reviews, credential binding, and live name checks. Provider reads must project explicitly selected fields rather than persist raw JSON. Keep credentials in Keychain and response headers out of error messages.
+Services are saved names and HTTPS links. Do not add provider polling, status dashboards, or credential requirements to this flow. Repository scans must remain bounded, avoid environment/credential files, and treat model output as suggestions requiring review. Legacy provider adapters remain for compatibility; the application no longer polls them.
 
 Do not add automatic mutation retries or include authentication data, account caches, private project metadata, or real repository screenshots in a contribution. Report vulnerabilities privately through the process in SECURITY.md.
 

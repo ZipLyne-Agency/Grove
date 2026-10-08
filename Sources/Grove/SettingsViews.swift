@@ -67,7 +67,7 @@ struct SettingsPane: View {
             VStack(alignment: .leading, spacing: 24) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Settings").font(.system(size: 20, weight: .semibold))
-                    Text("Projects, connections, and preferences are stored on this Mac. Credentials stay in macOS Keychain and are never shown.")
+                    Text("Projects and service links are stored on this Mac.")
                         .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 DetailSection(title: "GitHub") {
@@ -81,18 +81,15 @@ struct SettingsPane: View {
                 }
                 DetailSection(title: "Services") {
                     TableBox {
-                        row("Connections", value: countLabel(workspace.connections.count, "Connection", "Connections")) {
-                            Button("Show Connections") { workspace.destination = .connections }
+                        row("Services", value: countLabel(workspace.connections.count, "Service", "Services")) {
+                            Button("Show Services") { workspace.destination = .connections }
                         }
-                        row("Background Checks", value: "While Grove is open, and after waking or reconnecting. Failed checks back off.") {
-                            Button(workspace.syncing.isEmpty ? "Sync All" : "Syncing…") { Task { await workspace.syncAll(force: true) } }
-                                .disabled(!workspace.syncing.isEmpty || !workspace.canEdit)
-                        }
+
                     }
                 }
-                DetailSection(title: "Accounts") {
+                DetailSection(title: "Previously Saved Accounts") {
                     if workspace.accounts.isEmpty {
-                        Text("No provider accounts. Saved links work without one.").font(.system(size: 12)).foregroundStyle(.secondary)
+                        Text("Service links need no provider accounts.").font(.system(size: 12)).foregroundStyle(.secondary)
                     } else {
                         TableBox {
                             ForEach(workspace.accounts) { account in
@@ -101,19 +98,14 @@ struct SettingsPane: View {
                                     Text(account.name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
                                     Text(account.provider.title).font(.system(size: 11)).foregroundStyle(.secondary)
                                     Spacer(minLength: 8)
-                                    Button("Edit…") { ui.sheet = .editAccount(account, isNew: false) }.disabled(!workspace.canEdit)
+                                    Text("No longer used").foregroundStyle(.secondary)
                                     Button("Remove…") { ui.sheet = .removeAccount(account) }.disabled(!workspace.canEdit)
                                 }
                                 .controlSize(.small).padding(.horizontal, 10).frame(minHeight: 38)
                             }
                         }
                     }
-                    Menu("Add Account") {
-                        ForEach(ServiceProvider.allCases.filter(\.supportsAPI)) { provider in
-                            Button(provider.title) { ui.sheet = .editAccount(ProviderAccount(provider: provider, name: ""), isNew: true) }
-                        }
-                    }
-                    .fixedSize().controlSize(.small).disabled(!workspace.canEdit)
+
                 }
                 DetailSection(title: "Hidden Owners") {
                     if store.hiddenOwners.isEmpty {

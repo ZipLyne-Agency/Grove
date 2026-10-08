@@ -108,3 +108,30 @@ private actor RenameTransport: ProviderTransport {
     #expect(ServiceResolver.resolve("Open CF https://attacker.example", in: [first, second]).isEmpty)
     #expect(ServiceResolver.resolve("Open Sentry", in: [first, second]).isEmpty)
 }
+
+@Test func savedLinkConversionPreservesExactLinkAndMemberships() {
+    let project = UUID(), account = UUID()
+    var service = ServiceConnection(provider: .sentry, name: "Error Monitoring", resourceID: "app", dashboardURL: "https://example.com/my-project", accountID: account, projectIDs: [project], repositoryIDs: [7], pinned: true)
+    let id = service.id
+    service.snapshot = ServiceSnapshot(resourceID: "app", name: "Old", metrics: [ServiceMetric("Errors", "123")])
+    service.lastError = "Old failure"; service.authorizationFailed = true; service.lastAttemptAt = Date()
+    service.useAsSavedLink()
+    #expect(service.id == id && service.name == "Error Monitoring")
+    #expect(service.dashboardURL == "https://example.com/my-project")
+    #expect(service.projectIDs == [project] && service.repositoryIDs == [7] && service.pinned)
+    #expect(service.accountID == nil && service.snapshot == nil && service.lastError == nil && service.lastAttemptAt == nil)
+    #expect(!service.authorizationFailed && service.status() == .savedLink)
+}
+
+@Test func serviceScanUsesCanonicalLinks() throws {
+    let sentry = try #require(ServiceCatalog.discoveredService(name: "Sentry Cloudflare", evidence: "@sentry/cloudflare"))
+    #expect(sentry.provider == .sentry)
+    #expect(sentry.name == "Sentry")
+    #expect(sentry.url == "https://sentry.io/")
+    let neon = try #require(ServiceCatalog.discoveredService(name: "Neon Postgres", evidence: "@neondatabase/serverless"))
+    #expect(neon.name == "Neon")
+    #expect(neon.url == "https://console.neon.tech/")
+    #expect(ServiceCatalog.discoveredService(name: "Imaginary Service", evidence: "imaginary-sdk") == nil)
+    #expect(ServiceCatalog.discoveredService(name: "Stripe", evidence: "@stripe/stripe-js")?.url == "https://dashboard.stripe.com/")
+    #expect(ServiceCatalog.discoveredService(name: "Supabase", evidence: "@supabase/supabase-js")?.url == "https://supabase.com/dashboard")
+}

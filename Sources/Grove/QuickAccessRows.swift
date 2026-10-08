@@ -80,10 +80,10 @@ struct PinnedServiceRow: View {
         HStack(spacing: 9) {
             ProviderTile(provider: connection.provider, size: 24)
             VStack(alignment: .leading, spacing: 1) {
-                Text(connection.name).font(.system(size: 12.5, weight: .semibold)).lineLimit(1).truncationMode(.tail)
+                Text(connection.linkTitle).font(.system(size: 12.5, weight: .semibold)).lineLimit(1).truncationMode(.tail)
                 HStack(spacing: 4) {
                     Image(systemName: look.badgeSymbol).imageScale(.small).accessibilityHidden(true)
-                    Text("\(connection.provider.title) · \(look.badge)").lineLimit(1)
+                    Text(connection.dashboardURL).lineLimit(1)
                 }
                 .font(.system(size: 11)).foregroundStyle(look.attention ? AnyShapeStyle(Color.caution) : AnyShapeStyle(.secondary))
             }
@@ -111,14 +111,13 @@ struct PinnedProjectRow: View {
     let show: () -> Void
     var body: some View {
         let services = store.workspace.connections(for: project)
-        let attention = services.filter { ServiceLook($0, syncing: false).attention }.count
         Button(action: show) {
             HStack(spacing: 9) {
                 ProjectTile(project: project, size: 24)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(project.name).font(.system(size: 12.5, weight: .semibold)).lineLimit(1).truncationMode(.tail)
-                    Text("\(countLabel(project.repositoryIDs.count, "Repository", "Repositories")) · \(countLabel(services.count, "Service", "Services"))\(attention > 0 ? " · \(attention.formatted()) Need Attention" : "")")
-                        .font(.system(size: 11)).foregroundStyle(attention > 0 ? AnyShapeStyle(Color.danger) : AnyShapeStyle(.secondary)).lineLimit(1)
+                    Text("\(countLabel(project.repositoryIDs.count, "Repository", "Repositories")) · \(countLabel(services.count, "Service", "Services"))")
+                        .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer(minLength: 6)
                 Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)).foregroundStyle(.tertiary)

@@ -9,38 +9,16 @@ struct RepositoryServicesTab: View {
     let services: [ServiceConnection]
     private var workspace: WorkspaceStore { store.workspace }
     var body: some View {
-        let direct = services.filter { $0.repositoryIDs.contains(repo.id) }.count
         VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 6) {
-                Text(summary).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
-                Spacer(minLength: 8)
-                Button("Ask About Services") {
-                    store.requestAssistant("Summarize this repository's connected services. Say which are verified, out of date, failing, or only saved links.", repo: store.selected)
-                }
-                .disabled(!Intelligence.available || store.assistantBusy || !store.canStartReview || services.isEmpty)
-                Button("Sync Now") { for connection in services where connection.accountID != nil { workspace.requestSync(connection.id) } }
-                    .disabled(!workspace.canEdit || !services.contains { $0.accountID != nil })
-                Button("Discover Services") { ui.sheet = .discover(repo) }.disabled(!workspace.canEdit)
-                Button("Add Connection") { add() }.buttonStyle(.borderedProminent).disabled(!workspace.canEdit)
+            HStack {
+                Text(countLabel(services.count, "Service", "Services")).font(.system(size: 12)).foregroundStyle(.secondary)
+                Spacer()
+                Button("Find Services") { ui.sheet = .discover(repo) }.disabled(!workspace.canEdit)
+                Button("Add Service") { add() }.buttonStyle(.borderedProminent).disabled(!workspace.canEdit)
             }
             .controlSize(.small)
-            if services.count > direct {
-                FinePrint("Services marked Via Project are linked to a project this repository belongs to.")
-            }
-            ServiceGrid(store: store, ui: ui, connections: services, context: .repository(repo.id), usedBy: viaProject) { add() }
+            ServiceList(store: store, ui: ui, connections: services, context: .repository(repo.id)) { add() }
         }
-    }
-    private var summary: String {
-        if services.isEmpty { return "No services linked yet." }
-        let statuses = services.map { $0.status() }
-        let verified = statuses.filter { $0 == .verified || $0 == .stale }.count
-        let links = statuses.filter { $0 == .savedLink }.count
-        let suggested = statuses.filter { $0 == .suggested }.count
-        let attention = statuses.filter { $0 == .failed || $0 == .needsAuthorization }.count
-        var parts = ["\(verified.formatted()) Verified", "\(links.formatted()) Saved \(links == 1 ? "Link" : "Links")"]
-        if suggested > 0 { parts.append("\(suggested.formatted()) Suggested") }
-        if attention > 0 { parts.append("\(attention.formatted()) Need Attention") }
-        return parts.joined(separator: " · ")
     }
     private func viaProject(_ connection: ServiceConnection) -> String? {
         guard !connection.repositoryIDs.contains(repo.id) else { return nil }
@@ -48,7 +26,7 @@ struct RepositoryServicesTab: View {
         return names.isEmpty ? nil : "Via Project \(names.joined(separator: ", "))"
     }
     private func add() {
-        ui.sheet = .editConnection(ServiceConnection(provider: .vercel, name: "", repositoryIDs: [repo.id]), isNew: true)
+        ui.sheet = .editConnection(ServiceConnection(provider: .custom, name: "", repositoryIDs: [repo.id]), isNew: true)
     }
 }
 

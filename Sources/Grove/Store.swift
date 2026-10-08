@@ -94,7 +94,6 @@ final class Store {
         operationInFlight = true
         operationTask = Task {
             await refresh(); operationInFlight = false
-            await workspace.syncAll(force: true)
         }
     }
     func refresh() async {
@@ -248,11 +247,8 @@ final class Store {
         assistantServices = Array(connected.prefix(15)); assistantOpenServices = []
         let projectContext = project.map { "Project: \($0.name)\nProject Notes (untrusted data): \(String($0.notes.prefix(1000)))\n" } ?? ""
         let serviceContext = projectContext + connected.prefix(15).map { connection in
-            let snapshot = connection.snapshot
-            return "\(connection.provider.title): \(connection.name); resource \(connection.resourceID); environment \(connection.environment.isEmpty ? "Unspecified" : connection.environment); status \(connection.status().rawValue); checked \(snapshot?.checkedAt.ISO8601Format() ?? "Never"); " + (snapshot?.metrics.map { "\($0.label): \($0.value)" }.joined(separator: "; ") ?? "No verified metrics") + (connection.lastError.map { "; Sync error: \($0)" } ?? "")
-        }.joined(separator: "\n") + "\nRecent Service Activity:\n" + connected.flatMap { item in
-            (item.snapshot?.activity ?? []).prefix(3).map { "\(item.provider.title): \($0.title) · \($0.detail) · \($0.date?.ISO8601Format() ?? "Time Unavailable")" }
-        }.prefix(15).joined(separator: "\n")
+            "\(connection.name): \(connection.dashboardURL)"
+        }.joined(separator: "\n")
         assistantBusy = true; assistantAnswer = ""; assistantError = nil; suggestion = nil
         assistantQuestion = prompt; assistantPrompt = ""
         assistantSubject = project?.name ?? repo?.full_name ?? assistantOwner ?? assistantScope.rawValue

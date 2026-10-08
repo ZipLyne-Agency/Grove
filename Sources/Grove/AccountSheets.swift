@@ -59,7 +59,6 @@ struct AccountEditorSheet: View {
             saving = false
             guard saved else { return }
             credential = ""
-            for connection in workspace.connections where connection.accountID == account.id { workspace.requestSync(connection.id) }
             close(account)
         }
     }
@@ -103,82 +102,66 @@ struct DiscoverSheet: View {
     let ui: WorkspaceUI
     let repo: Repository
     @State private var chosen: Set<String> = []
+    @State private var scanTask: Task<Void, Never>?
     @State private var started = false
     private var workspace: WorkspaceStore { store.workspace }
-    private func known(_ suggestion: ServiceSuggestion) -> Bool {
-        !suggestion.resourceID.isEmpty && workspace.connections.contains {
-            $0.provider == suggestion.provider && $0.resourceID == suggestion.resourceID && $0.repositoryIDs.contains(repo.id)
+    private func known(_ item: ServiceSuggestion) -> Bool {
+        workspace.connections(for: repo.id).contains {
+            item.provider != .custom && $0.provider == item.provider || $0.dashboardURL == item.dashboardURL || $0.name.caseInsensitiveCompare(item.name) == .orderedSame
         }
     }
     var body: some View {
         let found = workspace.suggestions.filter { $0.repositoryID == repo.id }
-        SheetFrame(symbol: "sparkle.magnifyingglass", tint: .grove, title: "Discover Services", subtitle: repo.full_name, monospacedSubtitle: true, width: 500) {
-            Text("Grove reads configuration files on the default branch: \(ServiceDiscovery.paths.joined(separator: ", ")). It never runs them, never reads environment files, and treats nothing it finds as verified.")
+        SheetFrame(symbol: "magnifyingglass", tint: .grove, title: "Find Services", subtitle: repo.full_name, monospacedSubtitle: true, width: 520) {
+            Text("Scan repository configuration, dependency manifests, and README excerpts with the on-device assistant. Review the suggested services and website links below. You can edit each link to point to your project's dashboard.")
                 .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            if workspace.discovering || !started {
-                HStack(spacing: 8) { ProgressView().controlSize(.small); Text("Reading Configuration…").font(.system(size: 12)).foregroundStyle(.secondary) }
-            } else if found.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("No Services Found in Configuration").font(.system(size: 13, weight: .semibold))
-                    Text("You can still add a connection or a saved link by hand.").font(.system(size: 12)).foregroundStyle(.secondary)
-                }
-            } else {
+            if workspace.discovering {
+                HStack { ProgressView().controlSize(.small); Text("Finding Services…").font(.system(size: 12)) }
+            } else if started {
+                if found.isEmpty { Text("No services found in the scanned files. Add any others manually.").font(.system(size: 12)) }
                 ScrollView {
                     TableBox {
-                        ForEach(found) { suggestion in
-                            row(suggestion, already: known(suggestion))
+                        ForEach(found) { item in
+                            Toggle(isOn: Binding(get: { chosen.contains(item.id) && !known(item) }, set: { on in
+                                if on { chosen.insert(item.id) } else { chosen.remove(item.id) }
+                            })) {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(item.provider == .custom ? item.name : item.provider.title).font(.system(size: 13, weight: .medium))
+                                    Text(item.dashboardURL).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                                    Text(known(item) ? "Already Added" : "Found in \(item.source)").font(.system(size: 11)).foregroundStyle(.secondary)
+                                }
+                            }.toggleStyle(.checkbox).disabled(known(item)).padding(10)
                         }
                     }
-                }
-                .scrollIndicators(.never)
-                .frame(maxHeight: 280)
-                FinePrint("Selected services are added as Suggested. Connect each one to verify it, or keep it as a saved link.")
+                }.scrollIndicators(.never).frame(maxHeight: 270)
+                if let notice = workspace.notice { FinePrint(notice) }
+                FinePrint("The scan covers known files and catalogued services, so it may miss others. Links open service websites; edit them for your project dashboards.")
             }
             SheetError(store: store)
         } buttons: {
-            Button("Scan Again") { scan() }.disabled(workspace.discovering)
+            Button(started ? "Scan Again" : "Scan Repository") { scan() }.disabled(workspace.discovering)
             Spacer()
-            Button("Cancel") { ui.sheet = nil }.keyboardShortcut(.cancelAction)
-            Button(chosen.isEmpty ? "Add Suggestions" : "Add \(countLabel(chosen.count, "Suggestion", "Suggestions"))") { add(found) }
-                .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
-                .disabled(chosen.isEmpty || workspace.discovering || !workspace.canEdit)
+            Button("Cancel") { scanTask?.cancel(); ui.sheet = nil }.keyboardShortcut(.cancelAction)
+            Button("Add Selected") {
+                workspace.error = nil
+                for item in found where chosen.contains(item.id) && !known(item) {
+                    workspace.saveConnection(ServiceConnection(provider: item.provider, name: item.provider == .custom ? item.name : item.provider.title,
+                                                               dashboardURL: item.dashboardURL, repositoryIDs: [repo.id], source: item.source))
+                    if workspace.error != nil { return }
+                }
+                ui.sheet = nil
+            }.buttonStyle(.borderedProminent).disabled(chosen.isEmpty || workspace.discovering || !workspace.canEdit)
         }
         .onAppear { scan() }
-    }
-    private func row(_ suggestion: ServiceSuggestion, already: Bool) -> some View {
-        Toggle(isOn: Binding(get: { chosen.contains(suggestion.id) && !already },
-                             set: { on in if on { chosen.insert(suggestion.id) } else { chosen.remove(suggestion.id) } })) {
-            HStack(spacing: 9) {
-                ProviderTile(provider: suggestion.provider, size: 24)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(suggestion.provider.title).font(.system(size: 12.5, weight: .semibold))
-                    Text("\(suggestion.source)\(suggestion.resourceID.isEmpty ? "" : " · \(suggestion.resourceID)")")
-                        .font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                    Text(suggestion.explanation).font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: 6)
-                Text(already ? "Already Added" : suggestion.resourceID.isEmpty ? "Needs a Resource ID" : "New")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-            }
-        }
-        .toggleStyle(.checkbox).disabled(already)
-        .padding(.horizontal, 10).padding(.vertical, 8)
+        .onDisappear { scanTask?.cancel() }
     }
     private func scan() {
-        started = true; workspace.error = nil
-        Task {
+        started = true; chosen = []; workspace.error = nil; workspace.notice = nil
+        scanTask = Task {
             await workspace.discover(repo, using: store.service)
+            guard !Task.isCancelled else { return }
             chosen = Set(workspace.suggestions.filter { $0.repositoryID == repo.id && !known($0) }.map(\.id))
         }
-    }
-    private func add(_ found: [ServiceSuggestion]) {
-        workspace.error = nil
-        for suggestion in found where chosen.contains(suggestion.id) && !known(suggestion) {
-            workspace.saveConnection(ServiceConnection(provider: suggestion.provider, name: suggestion.name, resourceID: suggestion.resourceID,
-                                                       repositoryIDs: [repo.id], origin: .repository, source: suggestion.source))
-            if workspace.error != nil { return }
-        }
-        ui.sheet = nil
     }
 }
 

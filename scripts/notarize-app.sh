@@ -7,7 +7,7 @@ APP="${1:?Usage: notarize-app.sh /path/to/Grove.app}"
 : "${NOTARY_ISSUER:?Set NOTARY_ISSUER}"
 OUTPUT="$(dirname "$APP")"
 ARCHIVE="$OUTPUT/Grove-notary.zip"
-ZIP="$OUTPUT/Grove-0.2.0-macOS.zip"
+ZIP="$OUTPUT/Grove-0.2.1-macOS.zip"
 codesign --verify --strict "$APP"
 ditto -c -k --sequesterRsrc --keepParent "$APP" "$ARCHIVE"
 xcrun notarytool submit "$ARCHIVE" --key "$NOTARY_API_KEY_FILE" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER" --wait --timeout 5m --output-format json

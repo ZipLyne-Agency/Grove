@@ -45,7 +45,13 @@ final class WorkspaceStore {
         if load { Task { await reload() } }
     }
     func reload() async {
-        do { archive = try await persistence.load(); persistenceBlocked = false }
+        do {
+            let loaded = try await persistence.load()
+            archive = loaded
+            for index in archive.connections.indices { archive.connections[index].useAsSavedLink() }
+            persistenceBlocked = false
+            if archive != loaded { changed() }
+        }
         catch { self.error = error.localizedDescription; persistenceBlocked = true }
         loading = false
     }
@@ -179,7 +185,20 @@ final class WorkspaceStore {
     func discover(_ repo: Repository, using github: GitHubService) async {
         guard !discovering else { return }; discovering = true; suggestions = []
         defer { discovering = false }
-        do { suggestions = try await github.discoverServices(repo) }
+        do {
+            let files = try await github.serviceConfiguration(repo)
+            var found = ServiceDiscovery.inspect(repository: repo, files: files)
+            if Intelligence.available {
+                do {
+                    let inferred = try await Intelligence.findServices(repo: repo, files: files)
+                    for item in inferred where !found.contains(where: { $0.provider != .custom && $0.provider == item.provider || $0.name.caseInsensitiveCompare(item.name) == .orderedSame }) { found.append(item) }
+                    notice = "Scanned with the on-device assistant. Review the services and links before adding them."
+                } catch is CancellationError { throw CancellationError() }
+                catch { notice = "The assistant could not finish. Showing services found directly in configuration instead." }
+            } else { notice = "Apple Intelligence is unavailable. Showing services found directly in configuration." }
+            try Task.checkCancellation()
+            suggestions = found
+        }
         catch { self.error = error.localizedDescription }
     }
     func prepareRename(_ connection: ServiceConnection, name: String) async {

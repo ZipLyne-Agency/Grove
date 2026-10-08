@@ -120,7 +120,6 @@ struct ProjectRow: View {
     let project: GroveProject
     var body: some View {
         let services = store.workspace.connections(for: project)
-        let attention = services.filter { ServiceLook($0, syncing: false).attention }.count
         HStack(spacing: 10) {
             ProjectTile(project: project, size: 28)
             VStack(alignment: .leading, spacing: 2) {
@@ -131,7 +130,6 @@ struct ProjectRow: View {
                 HStack(spacing: 4) {
                     Text("\(countLabel(project.repositoryIDs.count, "Repository", "Repositories")) · \(countLabel(services.count, "Service", "Services"))")
                         .foregroundStyle(.secondary)
-                    if attention > 0 { Text("· \(attention.formatted()) Need Attention").foregroundStyle(Color.danger) }
                 }
                 .font(.system(size: 12)).lineLimit(1)
             }

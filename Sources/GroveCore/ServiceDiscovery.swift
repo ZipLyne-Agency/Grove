@@ -1,20 +1,22 @@
 import Foundation
 
 public struct ServiceSuggestion: Identifiable, Sendable, Equatable {
-    public var id: String { "\(repositoryID)-\(provider.rawValue)-\(resourceID)" }
+    public var id: String { "\(repositoryID)-\(provider.rawValue)-\(resourceID)-\(name)" }
     public let repositoryID: Int
     public let provider: ServiceProvider
     public let resourceID: String
     public let name: String
     public let source: String
     public let explanation: String
-    public init(repositoryID: Int, provider: ServiceProvider, resourceID: String, name: String, source: String, explanation: String) {
+    public let dashboardURL: String
+    public init(repositoryID: Int, provider: ServiceProvider, resourceID: String, name: String, source: String, explanation: String, dashboardURL: String? = nil) {
         self.repositoryID = repositoryID; self.provider = provider; self.resourceID = resourceID
         self.name = name; self.source = source; self.explanation = explanation
+        self.dashboardURL = dashboardURL ?? ServiceCatalog.homepage(provider)
     }
 }
 public enum ServiceDiscovery {
-    public static let paths = ["package.json", "app.json", "app.config.ts", "app.config.js", "eas.json", "wrangler.jsonc", "wrangler.toml", "cloudflare.config.ts", ".vercel/project.json", "sentry.properties"]
+    public static let paths = ["package.json", "app.json", "app.config.ts", "app.config.js", "eas.json", "wrangler.jsonc", "wrangler.toml", "cloudflare.config.ts", ".vercel/project.json", "sentry.properties", "README.md", "Package.swift", "Podfile", "pubspec.yaml", "Cargo.toml", "pyproject.toml", "requirements.txt", "build.gradle.kts", "composeApp/build.gradle.kts", "worker/package.json", "backend/package.json"]
     /// Inspect source text without evaluating JavaScript/configuration or reading environment/credential files.
     public static func inspect(repository: Repository, files: [String: String]) -> [ServiceSuggestion] {
         var suggestions: [ServiceSuggestion] = []
@@ -36,27 +38,27 @@ public enum ServiceDiscovery {
                 for (provider, packages) in [(ServiceProvider.expo, ["expo"]), (.oneSignal, ["react-native-onesignal", "@onesignal/node-onesignal"]),
                                              (.revenueCat, ["react-native-purchases", "@revenuecat/purchases-js"]), (.sentry, ["@sentry/react-native", "@sentry/nextjs", "@sentry/node"])] {
                     if packages.contains(where: { json["dependencies"][$0] != .null || json["devDependencies"][$0] != .null }) {
-                        add(provider, "", path, "SDK found. Choose the matching provider resource to verify the connection.")
+                        add(provider, "", path, "Service SDK found in this repository.")
                     }
                 }
             }
             if ["app.json", "app.config.ts", "app.config.js"].contains(path) {
                 if let id = match(#"[\"']?projectId[\"']?\s*:\s*[\"']([a-fA-F0-9-]{36})[\"']"#, text) {
-                    add(.expo, id, path, "EAS project ID found in configuration. Provider access has not been checked.")
+                    add(.expo, id, path, "EAS project ID found in configuration. ")
                 }
                 if let id = match(#"[\"']?(?:oneSignalAppId|onesignalAppId|ONESIGNAL_APP_ID)[\"']?\s*[:=]\s*[\"']([a-fA-F0-9-]{36})[\"']"#, text) {
-                    add(.oneSignal, id, path, "OneSignal app ID found in configuration. Provider access has not been checked.")
+                    add(.oneSignal, id, path, "OneSignal app ID found in configuration. ")
                 }
             }
             if path == ".vercel/project.json", let data = text.data(using: .utf8), let json = try? JSONDecoder().decode(ServiceJSON.self, from: data), let id = json["projectId"].string {
-                add(.vercel, id, path, "Vercel project ID found. Choose its account to verify the connection.")
+                add(.vercel, id, path, "Vercel project ID found. ")
             }
             if ["wrangler.jsonc", "wrangler.toml", "cloudflare.config.ts"].contains(path),
                let name = match(#"[\"']?name[\"']?\s*[:=]\s*[\"']([A-Za-z0-9_-]+)[\"']"#, text) {
-                add(.cloudflare, name, path, "Worker name found. Choose the Cloudflare account to verify it.")
+                add(.cloudflare, name, path, "Worker name found. ")
             }
             if path == "sentry.properties", let name = match(#"(?m)^defaults\.project\s*=\s*([A-Za-z0-9_-]+)"#, text) {
-                add(.sentry, name, path, "Sentry project slug found. Choose its organization to verify it.")
+                add(.sentry, name, path, "Sentry project slug found. ")
             }
         }
         return suggestions
@@ -64,7 +66,7 @@ public enum ServiceDiscovery {
 }
 
 extension GitHubService {
-    public func discoverServices(_ repo: Repository) async throws -> [ServiceSuggestion] {
+    public func serviceConfiguration(_ repo: Repository) async throws -> [String: String] {
         guard repo.safeIdentity else { throw GroveError.invalidResponse }
         var files: [String: String] = [:]
         for path in ServiceDiscovery.paths {
@@ -72,6 +74,9 @@ extension GitHubService {
             let data = try await configurationFile(repo, path: path)
             if let data, let text = String(data: data, encoding: .utf8) { files[path] = text }
         }
-        return ServiceDiscovery.inspect(repository: repo, files: files)
+        return files
+    }
+    public func discoverServices(_ repo: Repository) async throws -> [ServiceSuggestion] {
+        ServiceDiscovery.inspect(repository: repo, files: try await serviceConfiguration(repo))
     }
 }

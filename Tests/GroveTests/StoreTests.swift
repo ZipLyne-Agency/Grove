@@ -200,3 +200,14 @@ func onDeviceAssistantSmoke() async throws {
     let reopened = Store(service: GitHubService(transport: NoNetwork()), loadCache: false, preferences: preferences)
     #expect(reopened.sort == .createdOldest)
 }
+
+@MainActor @Test func onDeviceServiceScanSmoke() async throws {
+    guard ProcessInfo.processInfo.environment["GROVE_SERVICE_AI_SMOKE"] == "1" else { return }
+    #expect(Intelligence.available)
+    let repo = try sampleRepository()
+    let files = ["package.json": #"{"dependencies":{"@stripe/stripe-js":"1.0","@supabase/supabase-js":"1.0"}}"#]
+    let found = try await Intelligence.findServices(repo: repo, files: files)
+    #expect(found.contains { $0.name.localizedCaseInsensitiveContains("Stripe") })
+    #expect(found.contains { $0.name.localizedCaseInsensitiveContains("Supabase") })
+    #expect(found.allSatisfy { ServiceCatalog.safeURL($0.dashboardURL) != nil && $0.source == "package.json" })
+}

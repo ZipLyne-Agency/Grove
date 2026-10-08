@@ -134,7 +134,7 @@ struct LibraryView: View {
                 Button { ui.sheet = .editProject(GroveProject(name: ""), isNew: true) } label: { Label("New Project", systemImage: "plus") }
                     .disabled(!workspace.canEdit)
             case .connections:
-                Button { ui.sheet = .editConnection(ServiceConnection(provider: .vercel, name: ""), isNew: true) } label: { Label("Add Connection", systemImage: "plus") }
+                Button { ui.sheet = .editConnection(ServiceConnection(provider: .custom, name: ""), isNew: true) } label: { Label("Add Service", systemImage: "plus") }
                     .buttonStyle(.borderedProminent).disabled(!workspace.canEdit)
             case .settings:
                 EmptyView()
@@ -157,7 +157,6 @@ struct LibraryView: View {
     private var syncButton: some View {
         Button {
             store.requestRefresh()
-            Task { await workspace.syncAll(force: true) }
         } label: { Label("Sync Now", systemImage: "arrow.triangle.2.circlepath") }
         .buttonStyle(IconButtonStyle(size: 28, tint: syncing ? .grove : store.message != nil ? .caution : nil))
         .keyboardShortcut("r")
@@ -212,7 +211,7 @@ struct LibraryView: View {
         switch workspace.destination {
         case .library: store.owner ?? store.scope.title
         case .projects: ui.showAllProjects ? "All Projects" : workspace.selectedProject?.name ?? "Projects"
-        case .connections: "Connections"
+        case .connections: "Services"
         case .settings: "Settings"
         }
     }
@@ -224,8 +223,7 @@ struct LibraryView: View {
             }
             return countLabel(workspace.projects.count, "Project", "Projects")
         case .connections:
-            let attention = workspace.connections.filter { ServiceLook($0, syncing: false).attention }.count
-            return countLabel(workspace.connections.count, "Connection", "Connections") + (attention > 0 ? " · \(attention.formatted()) Need Attention" : "")
+            return countLabel(workspace.connections.count, "Service", "Services")
         case .settings:
             return "Stored on This Mac"
         case .library:

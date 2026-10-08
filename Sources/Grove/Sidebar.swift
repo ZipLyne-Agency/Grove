@@ -145,18 +145,10 @@ struct LibrarySidebar: View {
     }
 
     private var footer: some View {
-        let attention = workspace.connections.filter { ServiceLook($0, syncing: false).attention }.count
         return VStack(spacing: 1) {
-            SidebarRow("Connections", selected: workspace.destination == .connections,
+            SidebarRow("Services", selected: workspace.destination == .connections,
                        action: { workspace.destination = .connections }) {
                 Image(systemName: "powerplug")
-            }
-            .overlay(alignment: .trailing) {
-                if attention > 0 {
-                    Label(attention.formatted(), systemImage: "exclamationmark.triangle.fill").labelStyle(CompactLabelStyle())
-                        .font(.system(size: 11)).foregroundStyle(Color.caution).padding(.trailing, 8)
-                        .accessibilityLabel("\(attention) Need Attention")
-                }
             }
             SidebarRow("Settings", badge: "⌘,", selected: workspace.destination == .settings,
                        action: { workspace.destination = .settings }) {

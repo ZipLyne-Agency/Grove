@@ -165,6 +165,11 @@ public struct ServiceConnection: Identifiable, Codable, Equatable, Sendable {
         self.environment = environment; self.notes = notes; self.pinned = pinned; self.origin = origin; self.source = source
         authorizationFailed = false
     }
+    /// Keep the saved link and its memberships while dropping obsolete provider state.
+    public mutating func useAsSavedLink() {
+        accountID = nil; snapshot = nil; lastError = nil; lastAttemptAt = nil
+        authorizationFailed = false; origin = .manual
+    }
     public func status(now: Date = Date()) -> ConnectionStatus {
         if authorizationFailed { return .needsAuthorization }
         if lastError != nil { return .failed }

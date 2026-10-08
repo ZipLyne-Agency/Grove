@@ -61,52 +61,20 @@ struct ServiceLook {
     let dimmed: Bool
 
     @MainActor init(_ connection: ServiceConnection, syncing: Bool, now: Date = Date()) {
-        let status = connection.status(now: now)
-        dashed = status == .suggested
-        attention = status == .failed || status == .needsAuthorization
-        dimmed = status == .stale
-        badge = status.rawValue
-        switch status {
-        case .verified: badgeSymbol = "checkmark"; tint = .groveInk
-        case .stale: badgeSymbol = "clock"; tint = .secondary
-        case .failed: badgeSymbol = "exclamationmark.triangle"; tint = .caution
-        case .needsAuthorization: badgeSymbol = "key"; tint = .caution
-        case .savedLink: badgeSymbol = "link"; tint = .secondary
-        case .suggested: badgeSymbol = "sparkle.magnifyingglass"; tint = .secondary
-        case .unverified: badgeSymbol = "minus"; tint = .secondary
-        }
-        if syncing {
-            line = connection.snapshot == nil ? "Checking…" : "Checking Again…"
-            lineSymbol = "arrow.triangle.2.circlepath"; lineTint = .secondary; return
-        }
-        switch status {
-        case .verified:
-            line = "Checked \(GroveDates.named(connection.snapshot?.checkedAt))"; lineSymbol = "checkmark.circle"; lineTint = .groveInk
-        case .stale:
-            line = "Out of Date · Last Checked \(GroveDates.named(connection.snapshot?.checkedAt))"; lineSymbol = "clock"; lineTint = .secondary
-        case .failed:
-            line = connection.lastError ?? "The last check failed."; lineSymbol = "exclamationmark.triangle"; lineTint = .caution
-        case .needsAuthorization:
-            line = connection.lastError ?? "Update this account's credentials."; lineSymbol = "key"; lineTint = .caution
-        case .savedLink:
-            line = "No Status · Grove does not check saved links."; lineSymbol = "minus"; lineTint = .secondary
-        case .suggested:
-            line = "Not Connected · Found in \(connection.source ?? "repository configuration")"; lineSymbol = "minus"; lineTint = .secondary
-        case .unverified:
-            line = "Not Checked Yet"; lineSymbol = "minus"; lineTint = .secondary
-        }
+        badge = "Saved Link"; badgeSymbol = "link"; tint = .secondary
+        dashed = false; attention = false; dimmed = false
+        line = connection.dashboardURL; lineSymbol = "link"; lineTint = .secondary
     }
 }
 
 extension ServiceConnection {
-    @MainActor var provenance: String {
-        if let snapshot { return "\(provider.title) API · Checked \(GroveDates.named(snapshot.checkedAt))" }
-        switch origin {
-        case .repository: return "Repository Configuration\(source.map { " · \($0)" } ?? "")"
-        case .provider: return "\(provider.title) Account"
-        case .manual: return accountID == nil ? "Saved Link" : "Added Manually"
-        }
+    var linkTitle: String {
+        let suffix = name.components(separatedBy: " · ").last ?? name
+        if suffix.caseInsensitiveCompare(provider.rawValue) == .orderedSame { return provider.title }
+        if ["ios", "android"].contains(suffix.lowercased()) { return provider.title + " · " + suffix }
+        return name
     }
+    var provenance: String { "Saved Link" }
     var displayIdentity: String { resourceID.isEmpty ? (provider == .custom ? dashboardURL : "No Resource ID") : resourceID }
     var canOpen: Bool { ServiceCatalog.safeURL(dashboardURL) != nil }
 }
@@ -126,13 +94,6 @@ struct ActivityItem: Identifiable {
 @MainActor enum ActivityFeed {
     static func items(connections: [ServiceConnection], repositories: [Repository]) -> [ActivityItem] {
         var items: [ActivityItem] = []
-        for connection in connections {
-            for event in connection.snapshot?.activity ?? [] {
-                items.append(ActivityItem(id: "\(connection.id)-\(event.id)", title: event.title,
-                                          detail: [connection.provider.title, connection.name, event.detail].filter { !$0.isEmpty }.joined(separator: " · "),
-                                          date: event.date, url: event.url.flatMap(ServiceCatalog.safeURL), symbol: connection.provider.symbol))
-            }
-        }
         for repo in repositories {
             if let pushed = GroveDates.pushed(repo) {
                 items.append(ActivityItem(id: "push-\(repo.id)", title: "Pushed to \(repo.default_branch)", detail: "GitHub · \(repo.name)", date: pushed, url: repo.webURL, symbol: "arrow.up.circle"))
