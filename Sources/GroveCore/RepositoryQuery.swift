@@ -14,16 +14,17 @@ public enum RepositorySort: String, CaseIterable, Sendable {
     case issuesMost = "Issues & PRs: most first", issuesFewest = "Issues & PRs: fewest first"
 }
 public enum RepositoryQuery {
-    public static func filter(_ repos: [Repository], scope: LibraryScope, owner: String?, search: String, sort: RepositorySort, now: Date = Date()) -> [Repository] {
+    public static func filter(_ repos: [Repository], scope: LibraryScope, owner: String?, search: String, sort: RepositorySort, now: Date = Date(), descriptions: [Int: String] = [:], integrationNames: [Int: String] = [:]) -> [Repository] {
         let cutoff = now.addingTimeInterval(-30 * 86400)
         let terms = search.split(whereSeparator: \.isWhitespace).map(String.init)
         let filtered = repos.filter { repo in
             if let owner, repo.owner.login != owner { return false }
-            if !terms.allSatisfy({ repo.searchText.localizedCaseInsensitiveContains($0) }) { return false }
+            let searchable = repo.searchText + " " + (descriptions[repo.id] ?? "") + " " + (integrationNames[repo.id] ?? "")
+            if !terms.allSatisfy({ searchable.localizedCaseInsensitiveContains($0) }) { return false }
             switch scope {
             case .all: return true
             case .recent: return (repo.pushedDate ?? .distantPast) >= cutoff
-            case .missing: return !repo.hasDescription
+            case .missing: return !repo.hasDescription && (descriptions[repo.id] ?? "").isEmpty
             case .archived: return repo.archived
             case .forks: return repo.fork
             }

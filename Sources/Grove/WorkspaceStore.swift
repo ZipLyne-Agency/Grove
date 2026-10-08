@@ -15,6 +15,8 @@ final class WorkspaceStore {
     var persistenceBlocked = false
     var syncing: Set<UUID> = []
     var discovering = false
+    var enrichment = LibraryEnrichmentProgress()
+    var enrichmentTask: Task<Void, Never>?
     var suggestions: [ServiceSuggestion] = []
     var resources: [ProviderResource] = []
     var loadingResources = false
@@ -29,6 +31,7 @@ final class WorkspaceStore {
     private let persists: Bool
     private var accountRevisions: [UUID: Int] = [:]
     private var saveTask: Task<Void, Never>?
+    private var saveRevision = 0
     private var syncTasks: [UUID: Task<Void, Never>] = [:]
     private var stopped = false
     var projects: [GroveProject] { archive.projects.sorted { $0.pinned != $1.pinned ? $0.pinned : $0.name.localizedStandardCompare($1.name) == .orderedAscending } }
@@ -48,6 +51,7 @@ final class WorkspaceStore {
         do {
             let loaded = try await persistence.load()
             archive = loaded
+            archive.useRepositoryLibrary()
             for index in archive.connections.indices { archive.connections[index].useAsSavedLink() }
             persistenceBlocked = false
             if archive != loaded { changed() }
@@ -71,7 +75,7 @@ final class WorkspaceStore {
     }
     func removeProject(_ id: UUID) {
         guard canEdit else { return }; archive.removeProject(id)
-        if selectedProjectID == id { selectedProjectID = nil; destination = .projects }; changed()
+        if selectedProjectID == id { selectedProjectID = nil; destination = .library }; changed()
     }
     func saveConnection(_ connection: ServiceConnection) {
         guard canEdit else { return }
@@ -229,8 +233,9 @@ final class WorkspaceStore {
         guard let url = ServiceCatalog.safeURL(connection.dashboardURL) else { error = "Add a valid HTTPS dashboard URL."; return }; NSWorkspace.shared.open(url)
     }
     func copy(_ connection: ServiceConnection) { Clipboard.copy(connection.dashboardURL); notice = "Copied" }
-    private func changed() {
+    func changed() {
         guard persists, !persistenceBlocked else { return }
+        saveRevision += 1
         let snapshot = archive, previous = saveTask, persistence = persistence
         saveTask = Task {
             await previous?.value
@@ -239,6 +244,12 @@ final class WorkspaceStore {
             catch { self.error = error.localizedDescription; persistenceBlocked = true }
         }
     }
-    func flush() async { await saveTask?.value }
-    func stop() { stopped = true; syncTasks.values.forEach { $0.cancel() }; clearResources() }
+    func flush() async {
+        while let task = saveTask {
+            let revision = saveRevision
+            await task.value
+            if revision == saveRevision { return }
+        }
+    }
+    func stop() { stopped = true; enrichmentTask?.cancel(); syncTasks.values.forEach { $0.cancel() }; clearResources() }
 }

@@ -22,9 +22,12 @@ final class Store {
     var preparing = false
     var operationInFlight = false
     var mutationInFlight = false
+    var installingUpdate = false
+    var terminating = false
+    var updates: AppUpdates?
     var suggestion: AssistantSuggestion?
     var needsRefresh: Bool { inventory?.requiresRefresh == true }
-    var canStartReview: Bool { !workspace.hasRemoteReview && !busy && !preparing && !operationInFlight && consent == nil && preview == nil && editor == nil }
+    var canStartReview: Bool { !installingUpdate && !terminating && !workspace.hasRemoteReview && !busy && !preparing && !operationInFlight && consent == nil && preview == nil && editor == nil }
     var message: String?
     var lastAction: String?
     var consent: Consent?
@@ -63,7 +66,7 @@ final class Store {
         hiddenOwners = Set(preferences.stringArray(forKey: "hiddenOwners") ?? [])
         loadingCache = loadCache
         workspace.repositoryOperationActive = { [weak self] in
-            guard let self else { return true }; return self.busy || self.preparing || self.operationInFlight || self.preview != nil || self.editor != nil || self.consent != nil
+            guard let self else { return true }; return self.installingUpdate || self.terminating || self.busy || self.preparing || self.operationInFlight || self.preview != nil || self.editor != nil || self.consent != nil
         }
         if loadCache { Task {
             let cached = await cache.load()
@@ -78,10 +81,11 @@ final class Store {
         queryRevision += 1
         let revision = queryRevision
         let all = inventory?.repositories ?? []
+        let descriptions = localDescriptions, integrationNames = localIntegrationNames
         let repos = all.filter { !hiddenOwners.contains($0.owner.login) }, scope = scope, owner = owner, search = search, sort = sort
         queryTask = Task {
             let (results, totals) = await Task.detached(priority: .userInitiated) {
-                (RepositoryQuery.filter(repos, scope: scope, owner: owner, search: search, sort: sort), LibraryCounts(visible: repos, all: all))
+                (RepositoryQuery.filter(repos, scope: scope, owner: owner, search: search, sort: sort, descriptions: descriptions, integrationNames: integrationNames), LibraryCounts(visible: repos, all: all, descriptions: descriptions))
             }.value
             guard !Task.isCancelled, revision == queryRevision else { return }
             visible = results
@@ -97,7 +101,7 @@ final class Store {
         }
     }
     func refresh() async {
-        guard !busy else { return }
+        guard !busy, !installingUpdate, !terminating else { return }
         busy = true; message = nil; lastAction = nil
         defer { busy = false }
         do {
@@ -113,7 +117,7 @@ final class Store {
         guard canStartReview, !needsRefresh else { return }; editor = EditorRequest(repo: repo, kind: kind)
     }
     func prepare(_ repo: Repository, action: RepositoryAction) async {
-        guard let inventory, !busy, !preparing, !operationInFlight, !workspace.hasRemoteReview else { message = "Finish the current operation before reviewing another change."; return }
+        guard let inventory, !installingUpdate, !terminating, !busy, !preparing, !operationInFlight, !workspace.hasRemoteReview else { message = "Finish the current operation before reviewing another change."; return }
         guard preview == nil, consent == nil, editor == nil else { message = "Finish the current review before starting another change."; return }
         guard !needsRefresh else { message = "Refresh GitHub before reviewing another change."; return }
         preparing = true
@@ -246,7 +250,11 @@ final class Store {
             }
         assistantServices = Array(connected.prefix(15)); assistantOpenServices = []
         let projectContext = project.map { "Project: \($0.name)\nProject Notes (untrusted data): \(String($0.notes.prefix(1000)))\n" } ?? ""
-        let serviceContext = projectContext + connected.prefix(15).map { connection in
+        let analyzed = (repo.map { [$0.id] } ?? Array(contextIDs)).compactMap { workspace.profile(for: $0) }
+        let profileContext = analyzed.prefix(20).map { profile in
+            "\(profile.fullName): \(profile.summary). Source-referenced integrations: \(profile.visibleIntegrations.filter { !$0.documentationOnly }.map(\.name).joined(separator: ", "))"
+        }.joined(separator: "\n")
+        let serviceContext = projectContext + profileContext + "\nSaved dashboard links:\n" + connected.prefix(15).map { connection in
             "\(connection.name): \(connection.dashboardURL)"
         }.joined(separator: "\n")
         assistantBusy = true; assistantAnswer = ""; assistantError = nil; suggestion = nil
@@ -291,14 +299,14 @@ struct LibraryCounts: Sendable {
     private(set) var owners: [String: Int] = [:]
     init() {}
     /// `visible` excludes hidden owners; owner counts use `all` so hidden owners still show their size.
-    init(visible: [Repository], all: [Repository], now: Date = Date()) {
+    init(visible: [Repository], all: [Repository], now: Date = Date(), descriptions: [Int: String] = [:]) {
         let cutoff = now.addingTimeInterval(-30 * 86400)
         let parser = ISO8601DateFormatter()
         for repo in all { owners[repo.owner.login, default: 0] += 1 }
         for repo in visible {
             scopes[.all, default: 0] += 1
             if let pushed = repo.pushed_at.flatMap({ parser.date(from: $0) }), pushed >= cutoff { scopes[.recent, default: 0] += 1 }
-            if !repo.hasDescription { scopes[.missing, default: 0] += 1 }
+            if !repo.hasDescription && (descriptions[repo.id] ?? "").isEmpty { scopes[.missing, default: 0] += 1 }
             if repo.archived { scopes[.archived, default: 0] += 1 }
             if repo.fork { scopes[.forks, default: 0] += 1 }
         }

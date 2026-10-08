@@ -67,7 +67,7 @@ struct SettingsPane: View {
             VStack(alignment: .leading, spacing: 24) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Settings").font(.system(size: 20, weight: .semibold))
-                    Text("Projects and service links are stored on this Mac.")
+                    Text("Repository descriptions and service links are stored on this Mac.")
                         .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 DetailSection(title: "GitHub") {
@@ -87,6 +87,7 @@ struct SettingsPane: View {
 
                     }
                 }
+                UpdateSettingsView(store: store)
                 DetailSection(title: "Previously Saved Accounts") {
                     if workspace.accounts.isEmpty {
                         Text("Service links need no provider accounts.").font(.system(size: 12)).foregroundStyle(.secondary)

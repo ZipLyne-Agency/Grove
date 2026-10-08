@@ -110,7 +110,7 @@ struct RepositoryRow: View {
     let repo: Repository
     let store: Store
     let selected: Bool
-    var showsProjects = true
+    var showsProjects = false
     @State private var hovering = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var showActions: Bool { hovering || selected }
@@ -160,10 +160,6 @@ struct RepositoryRow: View {
                     .frame(height: 16)
                     .fixedSize()
                 }
-                Text(repo.hasDescription ? (repo.description ?? "") : "No Description")
-                    .font(.system(size: 12))
-                    .foregroundStyle(repo.hasDescription ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
-                    .lineLimit(1)
                 meta
             }
         }
@@ -188,7 +184,9 @@ struct RepositoryRow: View {
             Label(repo.visibilityLabel, systemImage: repo.visibilitySymbol).labelStyle(CompactLabelStyle())
             if repo.archived { Label("Archived", systemImage: "archivebox").labelStyle(CompactLabelStyle()) }
             if repo.fork { Label("Fork", systemImage: "arrow.triangle.branch").labelStyle(CompactLabelStyle()) }
-            if let projectLabel {
+            if let profile = store.workspace.profile(for: repo.id) {
+                Label(countLabel(profile.visibleIntegrations.filter { !$0.documentationOnly }.count, "Integration", "Integrations"), systemImage: "powerplug")
+            } else if let projectLabel {
                 Label(projectLabel, systemImage: "square.grid.2x2").labelStyle(CompactLabelStyle())
                     .foregroundStyle(Color.groveInk).truncationMode(.tail)
             } else if repo.stargazers_count > 0 {

@@ -5,7 +5,7 @@ import GroveCore
 /// What Quick Access asks the window to do. Copy and Open finish inside the popover and never become intents.
 enum PopoverIntent: Sendable {
     case library, reveal(GroveCore.Repository), ask(GroveCore.Repository?), refresh
-    case showProject(UUID), showAll(query: String, owner: String?)
+    case showAll(query: String, owner: String?)
     /// Closes the popover without showing the window, after opening a link in the browser.
     case dismiss
 }
@@ -75,8 +75,6 @@ enum PopoverIntent: Sendable {
                 }
                 store.showAssistant = true
             case .refresh: store.requestRefresh()
-            case .showProject(let id):
-                store.workspace.destination = .projects; store.workspace.selectedProjectID = id
             case .showAll(let query, let owner):
                 store.workspace.destination = .library
                 store.scope = .all; store.owner = owner; store.search = query

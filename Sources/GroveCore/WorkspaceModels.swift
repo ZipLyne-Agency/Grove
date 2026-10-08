@@ -185,7 +185,55 @@ public struct WorkspaceArchive: Codable, Equatable, Sendable {
     public var projects: [GroveProject] = []
     public var connections: [ServiceConnection] = []
     public var accounts: [ProviderAccount] = []
+    public var repositoryProfiles: [String: RepositoryProfile]? = nil
+    public var pinnedRepositoryIDs: Set<Int>? = nil
+    public var repositoryNotes: [String: String]? = nil
     public init() {}
+    private enum CodingKeys: String, CodingKey { case version, projects, connections, accounts, repositoryProfiles, pinnedRepositoryIDs, repositoryNotes }
+    private struct ProfileKey: CodingKey {
+        var stringValue: String
+        var intValue: Int? { nil }
+        init?(stringValue: String) { self.stringValue = stringValue }
+        init?(intValue: Int) { return nil }
+    }
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        version = try container.decode(Int.self, forKey: .version)
+        projects = try container.decode([GroveProject].self, forKey: .projects)
+        connections = try container.decode([ServiceConnection].self, forKey: .connections)
+        accounts = try container.decode([ProviderAccount].self, forKey: .accounts)
+        pinnedRepositoryIDs = try container.decodeIfPresent(Set<Int>.self, forKey: .pinnedRepositoryIDs)
+        repositoryNotes = try container.decodeIfPresent([String: String].self, forKey: .repositoryNotes)
+        // Profiles are rebuildable caches. A malformed entry must not hide saved links, pins or notes.
+        if let profiles = try? container.nestedContainer(keyedBy: ProfileKey.self, forKey: .repositoryProfiles) {
+            repositoryProfiles = [:]
+            for key in profiles.allKeys {
+                if let profile = try? profiles.decode(RepositoryProfile.self, forKey: key), String(profile.repositoryID) == key.stringValue {
+                    repositoryProfiles?[key.stringValue] = profile
+                }
+            }
+        }
+    }
+    /// Preserve legacy project data while moving its visible links, pins and notes onto repositories.
+    public mutating func useRepositoryLibrary() {
+        for index in connections.indices where !connections[index].projectIDs.isEmpty {
+            for project in projects where connections[index].projectIDs.contains(project.id) {
+                connections[index].repositoryIDs.formUnion(project.repositoryIDs)
+            }
+            connections[index].projectIDs = []
+        }
+        // The optional marker prevents removed pins or edited notes being restored at every launch.
+        if pinnedRepositoryIDs == nil {
+            pinnedRepositoryIDs = Set(projects.filter(\.pinned).flatMap(\.repositoryIDs))
+            repositoryNotes = [:]
+            for project in projects where !project.notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                for repositoryID in project.repositoryIDs {
+                    let key = String(repositoryID), old = repositoryNotes?[key] ?? ""
+                    repositoryNotes?[key] = old + (old.isEmpty ? "" : "\n\n") + project.name + ":\n" + project.notes
+                }
+            }
+        }
+    }
     public func projects(for repositoryID: Int) -> [GroveProject] { projects.filter { $0.repositoryIDs.contains(repositoryID) } }
     public func connections(for repositoryID: Int) -> [ServiceConnection] {
         let memberships = Set(projects(for: repositoryID).map(\.id))

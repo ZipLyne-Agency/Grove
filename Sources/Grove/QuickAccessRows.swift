@@ -4,6 +4,7 @@ import GroveCore
 /// One repository in Quick Access. Copy and Open finish here without showing the Grove window.
 struct QuickAccessRow: View {
     let repo: GroveCore.Repository
+    var description: String? = nil
     let highlighted: Bool
     let reveal: () -> Void
     let copy: () -> Void
@@ -15,7 +16,7 @@ struct QuickAccessRow: View {
         var parts = [repo.owner.login]
         if let language = repo.language { parts.append(language) }
         if repo.archived { parts.append("Archived") }
-        if repo.hasDescription, let description = repo.description { parts.append(description) }
+        if let description = description ?? repo.description, !description.isEmpty { parts.append(description) }
         else { parts.append(repo.visibilityLabel) }
         return parts.joined(separator: " · ")
     }

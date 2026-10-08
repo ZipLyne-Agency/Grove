@@ -1,7 +1,7 @@
 import SwiftUI
 import GroveCore
 
-/// Every service linked to a repository, directly or through one of its projects.
+/// Detected integration evidence and saved dashboard links for one repository.
 struct RepositoryServicesTab: View {
     let store: Store
     let ui: WorkspaceUI
@@ -11,12 +11,21 @@ struct RepositoryServicesTab: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text(countLabel(services.count, "Service", "Services")).font(.system(size: 12)).foregroundStyle(.secondary)
+                Text("\(workspace.profile(for: repo.id)?.visibleIntegrations.filter { !$0.documentationOnly }.count ?? 0) Integrations · \(countLabel(services.count, "Saved Link", "Saved Links"))").font(.system(size: 12)).foregroundStyle(.secondary)
                 Spacer()
-                Button("Find Services") { ui.sheet = .discover(repo) }.disabled(!workspace.canEdit)
+                Button("Refresh Integrations") {
+                    workspace.startEnrichment(repositories: [repo], using: store.service, onlyMissing: false) { store.rebuild() }
+                }.disabled(!workspace.canEdit || workspace.enrichment.running)
                 Button("Add Service") { add() }.buttonStyle(.borderedProminent).disabled(!workspace.canEdit)
             }
             .controlSize(.small)
+            RepositoryIntegrationList(store: store, repo: repo)
+            if workspace.profile(for: repo.id) == nil {
+                Button("Generate Description & Integrations") {
+                    workspace.startEnrichment(repositories: [repo], using: store.service, onlyMissing: false) { store.rebuild() }
+                }.disabled(workspace.enrichment.running || !workspace.canEdit)
+            }
+            SectionHeader("Saved Dashboard Links")
             ServiceList(store: store, ui: ui, connections: services, context: .repository(repo.id)) { add() }
         }
     }
@@ -70,20 +79,15 @@ struct RepositoryManageTab: View {
             FinePrint("Each change opens a review before anything is sent to GitHub. Transfer and deletion ask for the full name.")
             SectionHeader("Grove").padding(.top, 14)
             GroupedRows {
-                HStack(spacing: 9) {
-                    Image(systemName: "square.grid.2x2").frame(width: 15).accessibilityHidden(true)
-                    Text("Projects")
-                    Spacer(minLength: 0)
-                    ProjectMembershipMenu(store: store, ui: ui, repo: repo,
-                                          title: workspace.archive.projects(for: repo.id).isEmpty ? "Add to Project" : "Edit Projects")
-                }
-                .font(.system(size: 12)).padding(.horizontal, 10).frame(minHeight: 30)
+                Button { workspace.toggleRepositoryPin(repo.id) } label: {
+                    label(workspace.isRepositoryPinned(repo.id) ? "Unpin From Quick Access" : "Pin to Quick Access", "pin")
+                }.buttonStyle(RowButtonStyle())
                 Button { store.requestOwnerVisibility(repo.owner.login, hidden: true) } label: { label("Hide \(repo.owner.login) From Grove", "eye.slash") }
                     .buttonStyle(RowButtonStyle()).disabled(!store.canStartReview)
                 Button { store.requestCopy(String(repo.id)) } label: { label("Copy Repository ID", "number") }
                     .buttonStyle(RowButtonStyle())
             }
-            FinePrint("Projects, hidden owners, and connections only change Grove on this Mac.")
+            FinePrint("Descriptions, integrations, pinned repositories, and hidden owners are saved in Grove on this Mac.")
         }
     }
     private func label(_ title: String, _ symbol: String) -> some View {

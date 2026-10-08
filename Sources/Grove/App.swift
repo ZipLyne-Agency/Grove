@@ -14,6 +14,7 @@ struct GroveApp {
     }
     @MainActor private static func run() {
         if CommandLine.arguments.contains("--import-setup-stdin") { SetupCommand.run() }
+        if CommandLine.arguments.contains("--profile-summary") { ProfileSummaryCommand.run() }
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate
@@ -42,24 +43,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         status = StatusController(store: store) { [weak self] in self?.showWindow() }
         installMenu()
         background = BackgroundRefresh(store: store); background.start()
+        store.updates = AppUpdates(store: store)
+        installUpdateMenu()
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { showWindow(); return true }
     func showWindow() { window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true) }
     @objc func showLibrary(_ sender: Any?) { showWindow() }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        background.stop()
+        if store.terminating { return .terminateLater }
+        store.terminating = true
         store.assistantTask?.cancel()
+        store.workspace.stopEnrichment()
         if !store.mutationInFlight { store.operationTask?.cancel() }
         Task {
+            await store.workspace.enrichmentTask?.value
             await store.operationTask?.value
-            while store.workspace.renaming || store.workspace.preparingRename {
+            while store.busy || store.operationInFlight || store.mutationInFlight || store.preparing || store.workspace.loadingResources || store.workspace.renaming || store.workspace.preparingRename || store.workspace.discovering || !store.workspace.syncing.isEmpty {
                 try? await Task.sleep(for: .milliseconds(50))
             }
             await store.workspace.flush()
+            if store.workspace.persistenceBlocked {
+                store.terminating = false
+                store.installingUpdate = false
+                store.message = "Grove could not save your workspace. Resolve the save error before quitting or updating."
+                sender.reply(toApplicationShouldTerminate: false)
+                return
+            }
+            background.stop()
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
+    }
+    private func installUpdateMenu() {
+        guard let menu = NSApp.mainMenu?.items.first?.submenu, let updates = store.updates else { return }
+        let item = NSMenuItem(title: "Check for Updates…", action: #selector(AppUpdates.checkForUpdates(_:)), keyEquivalent: "")
+        item.target = updates
+        menu.insertItem(item, at: 1)
     }
     func applicationWillTerminate(_ notification: Notification) {
         store.assistantTask?.cancel(); store.operationTask?.cancel(); store.queryTask?.cancel(); status.stop(); background.stop()

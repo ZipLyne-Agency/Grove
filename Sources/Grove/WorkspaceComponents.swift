@@ -44,7 +44,7 @@ enum WorkspaceSheet: Identifiable {
     }
 }
 
-enum RepositoryTab: String, CaseIterable { case overview = "Overview", services = "Services", activity = "Activity", manage = "Manage" }
+enum RepositoryTab: String, CaseIterable { case overview = "Overview", services = "Integrations", activity = "Activity", manage = "Manage" }
 
 // MARK: Status
 

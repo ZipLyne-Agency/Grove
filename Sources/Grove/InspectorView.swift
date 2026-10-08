@@ -17,8 +17,7 @@ struct InspectorView: View {
             if let repo = store.selected {
                 detail(repo)
             } else if store.inventory == nil {
-                ContentUnavailableView("No Details Yet", systemImage: "sidebar.right",
-                                       description: Text("Connect GitHub to see repository details here."))
+                GitHubSetupView(store: store)
             } else {
                 ContentUnavailableView("No Selection", systemImage: "sidebar.right",
                                        description: Text("Select a repository to see its details, services, and actions."))
@@ -33,21 +32,26 @@ struct InspectorView: View {
         let services = workspace.connections(for: repo.id)
         return VStack(spacing: 0) {
             header(repo)
-            DetailTabs(tabs: RepositoryTab.allCases, selection: tab, counts: [.services: services.count])
+            DetailTabs(tabs: RepositoryTab.allCases, selection: tab, counts: [.services: workspace.profile(for: repo.id)?.visibleIntegrations.filter { !$0.documentationOnly }.count ?? services.count])
                 .padding(.top, 14)
-            ScrollView {
-                Group {
-                    switch tab.wrappedValue {
-                    case .overview: overview(repo, services: services)
-                    case .services: RepositoryServicesTab(store: store, ui: ui, repo: repo, services: services)
-                    case .activity: ActivityList(items: ActivityFeed.items(connections: services, repositories: [repo]))
-                    case .manage: RepositoryManageTab(store: store, ui: ui, repo: repo)
+            if tab.wrappedValue == .overview {
+                overview(repo)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .padding(.horizontal, width >= 600 ? 24 : 20).padding(.vertical, 18)
+            } else {
+                ScrollView {
+                    Group {
+                        switch tab.wrappedValue {
+                        case .overview: EmptyView()
+                        case .services: RepositoryServicesTab(store: store, ui: ui, repo: repo, services: services)
+                        case .activity: ActivityList(items: ActivityFeed.items(connections: services, repositories: [repo]))
+                        case .manage: RepositoryManageTab(store: store, ui: ui, repo: repo)
+                        }
                     }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, width >= 600 ? 24 : 20).padding(.vertical, 18)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, width >= 600 ? 24 : 20).padding(.vertical, 18)
+                }.scrollIndicators(.never)
             }
-            .scrollIndicators(.never)
         }
         .contextMenu { RepositoryMenu(store: store, repo: repo) }
     }
@@ -117,115 +121,12 @@ struct InspectorView: View {
 
     // MARK: Overview
 
-    /// Two columns only when the summary column can keep a readable width; otherwise it stacks below Details.
-    @ViewBuilder private func overview(_ repo: Repository, services: [ServiceConnection]) -> some View {
-        let content = width - 48
-        let summaryWidth = min(320, max(260, (content - 28) * 0.38))
-        if content - summaryWidth - 28 >= 380 {
-            HStack(alignment: .top, spacing: 28) {
-                primary(repo).frame(maxWidth: .infinity, alignment: .leading)
-                secondary(repo, services: services).frame(width: summaryWidth, alignment: .leading)
-            }
-        } else {
-            VStack(alignment: .leading, spacing: 20) { primary(repo); secondary(repo, services: services) }
-        }
-    }
-
-    private func primary(_ repo: Repository) -> some View {
-        VStack(alignment: .leading, spacing: 20) {
-            DetailSection(title: "Project") { projectChips(repo) }
+    private func overview(_ repo: Repository) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
             DetailSection(title: "About") {
-                if repo.hasDescription {
-                    Text(repo.description ?? "").font(.system(size: 13)).lineSpacing(2)
-                        .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-                } else {
-                    Text("No Description").font(.system(size: 13)).foregroundStyle(.secondary)
-                    if repo.canAdminister {
-                        Button("Add a Description…") { store.requestEdit(repo, kind: .description) }
-                            .buttonStyle(.link).font(.system(size: 12))
-                            .disabled(!store.canStartReview || store.needsRefresh)
-                    }
-                }
-                if let topics = repo.topics, !topics.isEmpty {
-                    FlowLayout(spacing: 5) { ForEach(topics, id: \.self) { GroveTag(text: $0, tint: .groveInk) } }.padding(.top, 2)
-                }
+                RepositoryDescriptionView(store: store, repo: repo)
             }
             facts(repo)
-            DetailSection(title: "Clone") {
-                HStack(spacing: 8) {
-                    Text(repo.cloneCommand).font(.system(size: 11.5, design: .monospaced)).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    Button { copy(repo.cloneCommand) } label: { Label("Copy Clone Command", systemImage: copied ? "checkmark" : "doc.on.doc") }
-                        .buttonStyle(IconButtonStyle(size: 24, tint: copied ? .groveInk : nil)).help("Copy Clone Command")
-                }
-                .padding(.leading, 10).padding(.trailing, 4).frame(height: 32)
-                .background(Color.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.hairline.opacity(0.7)))
-            }
-        }
-    }
-
-    private func secondary(_ repo: Repository, services: [ServiceConnection]) -> some View {
-        VStack(alignment: .leading, spacing: 20) {
-            DetailSection(title: "Services") {
-                if services.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("No Services Yet").font(.system(size: 12, weight: .semibold))
-                        Text("Connect the tools this repository ships with, or let Grove look for them in its configuration.")
-                            .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                        ViewThatFits(in: .horizontal) {
-                            HStack(spacing: 6) { emptyServiceActions(repo) }
-                            VStack(alignment: .leading, spacing: 6) { emptyServiceActions(repo) }
-                        }
-                        .controlSize(.small).disabled(!workspace.canEdit)
-                    }
-                } else {
-                    TableBox {
-                        ForEach(Array(services.prefix(5))) { connection in
-                            ServiceRow(store: store, ui: ui, connection: connection, context: .repository(repo.id))
-                        }
-                    }
-                    Button("View All Services") { tab.wrappedValue = .services }.buttonStyle(.link).font(.system(size: 12))
-                }
-            }
-            DetailSection(title: "Recent Activity") {
-                ActivityList(items: ActivityFeed.items(connections: services, repositories: [repo]), limit: 3)
-            }
-        }
-    }
-
-    @ViewBuilder private func emptyServiceActions(_ repo: Repository) -> some View {
-        Button("Find Services") { ui.sheet = .discover(repo) }.fixedSize()
-        Button("Add Service") { ui.sheet = .editConnection(ServiceConnection(provider: .custom, name: "", repositoryIDs: [repo.id]), isNew: true) }.fixedSize()
-    }
-
-    private func projectChips(_ repo: Repository) -> some View {
-        let memberships = workspace.archive.projects(for: repo.id).sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-        return FlowLayout(spacing: 6) {
-            if memberships.isEmpty {
-                Text("Not in a Project").font(.system(size: 12)).foregroundStyle(.secondary).frame(height: 30)
-            }
-            ForEach(memberships) { project in
-                Button {
-                    workspace.destination = .projects; workspace.selectedProjectID = project.id
-                    ui.showAllProjects = false; ui.projectRepositoryID = nil
-                } label: {
-                    HStack(spacing: 7) {
-                        ProjectTile(project: project, size: 18)
-                        Text(project.name).font(.system(size: 12.5, weight: .semibold)).lineLimit(1).truncationMode(.tail)
-                        Text("\(countLabel(project.repositoryIDs.count, "Repository", "Repositories")) · \(countLabel(workspace.connections(for: project).count, "Service", "Services"))")
-                            .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
-                        Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)).foregroundStyle(.tertiary)
-                    }
-                    .padding(.horizontal, 8).frame(height: 30)
-                    .background(Color.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.hairline.opacity(0.7)))
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help("Show \(project.name)")
-            }
-            ProjectMembershipMenu(store: store, ui: ui, repo: repo, title: "Add to Project")
         }
     }
 

@@ -41,11 +41,6 @@ struct LibrarySidebar: View {
         if let account, store.owners.contains(account) { return [account] + others }
         return others
     }
-    private var sidebarProjects: [GroveProject] {
-        let pinned = workspace.projects.filter(\.pinned)
-        let recent = workspace.archive.projects.filter { !$0.pinned }.sorted { $0.updatedAt > $1.updatedAt }.prefix(3)
-        return pinned + recent
-    }
     var body: some View {
         VStack(spacing: 0) {
             WindowDragArea().frame(height: 44)
@@ -59,31 +54,6 @@ struct LibrarySidebar: View {
                                 Image(systemName: scope.symbol)
                             }
                             .contextMenu { ScopeMenu(store: store, scope: scope) }
-                        }
-                    }
-                    section("Projects", add: { ui.sheet = .editProject(GroveProject(name: ""), isNew: true) }) {
-                        if workspace.projects.isEmpty {
-                            SidebarRow("New Project…", selected: false, action: { ui.sheet = .editProject(GroveProject(name: ""), isNew: true) }) {
-                                Image(systemName: "plus.square.dashed")
-                            }
-                        }
-                        ForEach(sidebarProjects) { project in
-                            SidebarRow(project.name, badge: project.repositoryIDs.count.formatted(),
-                                       selected: workspace.destination == .projects && !ui.showAllProjects && workspace.selectedProjectID == project.id,
-                                       action: {
-                                           workspace.destination = .projects; workspace.selectedProjectID = project.id
-                                           ui.showAllProjects = false; ui.projectRepositoryID = nil
-                                       }) {
-                                ProjectTile(project: project, size: 14)
-                            }
-                            .contextMenu { ProjectMenu(store: store, ui: ui, project: project) }
-                        }
-                        if !workspace.projects.isEmpty {
-                            SidebarRow("All Projects", badge: workspace.projects.count.formatted(),
-                                       selected: workspace.destination == .projects && ui.showAllProjects,
-                                       action: { workspace.destination = .projects; ui.showAllProjects = true; ui.projectRepositoryID = nil }) {
-                                Image(systemName: "square.grid.2x2")
-                            }
                         }
                     }
                     section("Owners", add: nil) {

@@ -2,7 +2,7 @@ import Foundation
 
 /// Only approve can issue a write; confirmations are bound to an immutable preview and consumed once.
 public actor GitHubService {
-    private let transport: any GitHubTransport
+    let transport: any GitHubTransport
     private var pending: [UUID: ActionPreview] = [:]
     public init(transport: any GitHubTransport = CLITransport()) { self.transport = transport }
 
@@ -116,7 +116,7 @@ public actor GitHubService {
     private static func patch(_ path: String, _ body: [String: Any]) throws -> APIRequest {
         APIRequest(path: path, method: "PATCH", body: try JSONSerialization.data(withJSONObject: body))
     }
-    private static func check(_ result: APIResponse) throws {
+    static func check(_ result: APIResponse) throws {
         guard (200..<300).contains(result.status) else {
             if result.status == 401 { throw GroveError.loginRequired }
             throw GroveError.commandFailed(Int32(result.status))

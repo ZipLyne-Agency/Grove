@@ -16,8 +16,9 @@ struct QuickAccessPanel: View {
         (store.inventory?.repositories ?? []).filter { !store.hiddenOwners.contains($0.owner.login) }
     }
     private var terms: [String] { search.split(whereSeparator: \.isWhitespace).map(String.init) }
-    private var pinnedProjects: [GroveProject] {
-        store.workspace.projects.filter { project in project.pinned && terms.allSatisfy { project.name.localizedCaseInsensitiveContains($0) } }
+    private var pinnedRepositories: [GroveCore.Repository] {
+        libraryRepos.filter { store.workspace.isRepositoryPinned($0.id) }
+            .filter { repo in terms.allSatisfy { repo.searchText.localizedCaseInsensitiveContains($0) } }
     }
     private var pinnedServices: [ServiceConnection] {
         store.workspace.connections.filter { connection in
@@ -29,7 +30,8 @@ struct QuickAccessPanel: View {
     }
 
     var body: some View {
-        let matches = RepositoryQuery.filter(libraryRepos, scope: .all, owner: ownerFilter, search: search, sort: store.sort)
+        let matches = RepositoryQuery.filter(libraryRepos, scope: .all, owner: ownerFilter, search: search, sort: store.sort,
+                                            descriptions: store.localDescriptions, integrationNames: store.localIntegrationNames)
         let rows = Array(matches.prefix(Self.rowLimit))
         VStack(spacing: 0) {
             header
@@ -38,7 +40,7 @@ struct QuickAccessPanel: View {
             } else {
                 notices
                 searchRow(rows)
-                if rows.isEmpty && pinnedServices.isEmpty && pinnedProjects.isEmpty { noResults } else { list(rows, total: matches.count) }
+                if rows.isEmpty && pinnedServices.isEmpty && pinnedRepositories.isEmpty { noResults } else { list(rows, total: matches.count) }
             }
             Divider()
             footer(hasRows: !rows.isEmpty)
@@ -190,10 +192,14 @@ struct QuickAccessPanel: View {
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 1) {
-                    if !pinnedProjects.isEmpty || !pinnedServices.isEmpty {
+                    if !pinnedRepositories.isEmpty || !pinnedServices.isEmpty {
                         sectionLabel("Pinned", trailing: nil)
-                        ForEach(pinnedProjects) { project in
-                            PinnedProjectRow(store: store, project: project) { send(.showProject(project.id)) }
+                        ForEach(pinnedRepositories) { repo in
+                            QuickAccessRow(repo: repo, description: store.workspace.profile(for: repo.id)?.summary, highlighted: false,
+                                           reveal: { send(.reveal(repo)) },
+                                           copy: { if let url = repo.webURL { Clipboard.copy(url.absoluteString); copied = "Copied Link" } },
+                                           open: { store.requestOpen(repo); send(.dismiss) },
+                                           ask: { send(.ask(repo)) })
                         }
                         ForEach(pinnedServices) { connection in
                             PinnedServiceRow(connection: connection, look: ServiceLook(connection, syncing: store.workspace.syncing.contains(connection.id)),
@@ -206,7 +212,7 @@ struct QuickAccessPanel: View {
                                      trailing: total > rows.count ? "Showing \(rows.count) of \(total.formatted())" : nil)
                     }
                     ForEach(rows) { repo in
-                        QuickAccessRow(repo: repo, highlighted: repo.id == active,
+                        QuickAccessRow(repo: repo, description: store.workspace.profile(for: repo.id)?.summary, highlighted: repo.id == active,
                                        reveal: { send(.reveal(repo)) },
                                        copy: { if let url = repo.webURL { Clipboard.copy(url.absoluteString); copied = "Copied Link · \(repo.full_name)" } },
                                        open: { store.requestOpen(repo); send(.dismiss) },

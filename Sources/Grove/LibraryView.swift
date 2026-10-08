@@ -30,6 +30,7 @@ struct LibraryView: View {
         .onChange(of: store.owner) { store.rebuild() }
         .onChange(of: store.search) { store.rebuild() }
         .onChange(of: store.sort) { store.rebuild() }
+        .onChange(of: workspace.archive.repositoryProfiles) { store.rebuild() }
         .task(id: copied) {
             guard copied else { return }
             try? await Task.sleep(for: .seconds(1.6))
@@ -46,7 +47,6 @@ struct LibraryView: View {
         .background {
             Group {
                 Button("Find") { workspace.destination = .library; searchFocused = true }.keyboardShortcut("f")
-                Button("New Project") { ui.sheet = .editProject(GroveProject(name: ""), isNew: true) }.keyboardShortcut("n")
                 Button("Settings") { workspace.destination = .settings }.keyboardShortcut(",")
                 Button("Ask Grove") { store.showAssistant.toggle() }.keyboardShortcut("a", modifiers: [.command, .shift])
             }
@@ -83,7 +83,6 @@ struct LibraryView: View {
 
     @ViewBuilder private var middle: some View {
         switch workspace.destination {
-        case .projects: ProjectsColumn(store: store, ui: ui)
         case .connections: ConnectionsColumn(store: store, ui: ui)
         default: RepositoryList(store: store, ui: ui)
         }
@@ -91,15 +90,6 @@ struct LibraryView: View {
 
     @ViewBuilder private var detail: some View {
         switch workspace.destination {
-        case .projects:
-            if !ui.showAllProjects, ui.projectRepositoryID != nil, store.selected != nil {
-                InspectorView(store: store, ui: ui)
-            } else if let project = workspace.selectedProject {
-                ProjectDetailView(store: store, ui: ui, project: project)
-            } else {
-                ContentUnavailableView("No Project Selected", systemImage: "square.grid.2x2",
-                                       description: Text("Choose a project, or create one to group repositories and services."))
-            }
         case .connections:
             if let id = ui.selectedAccountID, let account = workspace.accounts.first(where: { $0.id == id }) {
                 AccountDetailView(store: store, ui: ui, account: account)
@@ -127,12 +117,10 @@ struct LibraryView: View {
             Spacer(minLength: 12)
             if copied { CopiedBadge() }
             switch workspace.destination {
-            case .library:
+            case .library, .projects:
                 searchField.frame(width: compact ? 190 : 250)
                 sortMenu
-            case .projects:
-                Button { ui.sheet = .editProject(GroveProject(name: ""), isNew: true) } label: { Label("New Project", systemImage: "plus") }
-                    .disabled(!workspace.canEdit)
+                LibraryEnrichmentMenu(store: store)
             case .connections:
                 Button { ui.sheet = .editConnection(ServiceConnection(provider: .custom, name: ""), isNew: true) } label: { Label("Add Service", systemImage: "plus") }
                     .buttonStyle(.borderedProminent).disabled(!workspace.canEdit)
@@ -209,27 +197,25 @@ struct LibraryView: View {
 
     private var title: String {
         switch workspace.destination {
-        case .library: store.owner ?? store.scope.title
-        case .projects: ui.showAllProjects ? "All Projects" : workspace.selectedProject?.name ?? "Projects"
+        case .library, .projects: store.owner ?? store.scope.title
         case .connections: "Services"
         case .settings: "Settings"
         }
     }
     private var countLine: String {
         switch workspace.destination {
-        case .projects:
-            if !ui.showAllProjects, let project = workspace.selectedProject {
-                return "Project · \(countLabel(project.repositoryIDs.count, "Repository", "Repositories")) · \(countLabel(workspace.connections(for: project).count, "Service", "Services"))"
-            }
-            return countLabel(workspace.projects.count, "Project", "Projects")
         case .connections:
             return countLabel(workspace.connections.count, "Service", "Services")
         case .settings:
             return "Stored on This Mac"
-        case .library:
+        case .library, .projects:
             guard store.inventory != nil else { return store.loadingCache ? "Loading…" : "Not Connected" }
             let total = store.owner.map { store.counts.count(owner: $0) } ?? store.counts.count(store.scope)
-            if store.search.isEmpty { return countLabel(total, "Repository", "Repositories") }
+            if store.search.isEmpty {
+                let current = Set(store.inventory?.repositories.map(\.id) ?? [])
+                let profiles = (workspace.archive.repositoryProfiles ?? [:]).values.filter { current.contains($0.repositoryID) }.count
+                return countLabel(total, "Repository", "Repositories") + " · \(profiles) Profiles Saved"
+            }
             return "\(store.visible.count.formatted()) of \(countLabel(total, "Repository", "Repositories"))"
         }
     }
@@ -237,6 +223,7 @@ struct LibraryView: View {
     // MARK: Notices
 
     @ViewBuilder private var notices: some View {
+        LibraryEnrichmentStatus(store: store)
         if store.needsRefresh {
             NoticeBar(text: "Changes are paused while Grove confirms GitHub's current state.",
                       symbol: "arrow.triangle.2.circlepath", tint: .caution,
