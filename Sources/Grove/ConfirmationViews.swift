@@ -2,7 +2,7 @@ import SwiftUI
 import GroveCore
 
 /// Shared sheet frame: badge, title, subtitle, content, then right-aligned buttons.
-private struct SheetFrame<Content: View, Buttons: View>: View {
+struct SheetFrame<Content: View, Buttons: View>: View {
     let symbol: String
     let tint: Color
     let title: String
@@ -40,7 +40,7 @@ private struct SheetFrame<Content: View, Buttons: View>: View {
 }
 
 /// A labeled value box. Values are selectable so long names can be checked.
-private struct ValueBox: View {
+struct ValueBox: View {
     let rows: [(String, String, Bool)]
     var tint: Color? = nil
     var body: some View {
@@ -62,7 +62,7 @@ private struct ValueBox: View {
     }
 }
 
-private struct FinePrint: View {
+struct FinePrint: View {
     let text: String
     init(_ text: String) { self.text = text }
     var body: some View {
@@ -127,7 +127,7 @@ struct ConsentView: View {
         case .open, .url: "arrow.up.right.square"
         case .copy: "doc.on.doc"
         case .ownerVisibility(_, let hidden): hidden ? "eye.slash" : "eye"
-        case .assistant: "sparkles"
+        case .assistant: "text.bubble"
         }
     }
     private var tint: Color {
@@ -196,10 +196,10 @@ struct EditorView: View {
 
     @ViewBuilder private var renameFields: some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text("New name").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+            Text("New Name").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
             TextField("Repository name", text: $value).textFieldStyle(.roundedBorder).autocorrectionDisabled().focused($focused)
         }
-        ValueBox(rows: [("Will become", "\(repo.owner.login)/\(value.isEmpty ? "…" : value)", true)])
+        ValueBox(rows: [("Will Become", "\(repo.owner.login)/\(value.isEmpty ? "…" : value)", true)])
         validationNote ?? FinePrint("Letters, numbers, dots, hyphens and underscores. GitHub redirects the old address.")
     }
     @ViewBuilder private var descriptionFields: some View {
@@ -235,7 +235,7 @@ struct EditorView: View {
         catch { return FinePrint((error as? LocalizedError)?.errorDescription ?? "Enter a different name.") }
     }
     private var symbol: String { switch request.kind { case .rename: "pencil"; case .description: "text.alignleft"; case .transfer: "arrow.right.arrow.left" } }
-    private var title: String { switch request.kind { case .rename: "Rename repository"; case .description: "Edit description"; case .transfer: "Transfer to an organization" } }
+    private var title: String { switch request.kind { case .rename: "Rename Repository"; case .description: "Edit Description"; case .transfer: "Transfer to an Organization" } }
     private var reviewTitle: String { switch request.kind { case .rename: "Review Rename…"; case .description: "Review Description…"; case .transfer: "Review Transfer…" } }
     private var action: RepositoryAction { switch request.kind { case .rename: .rename(value); case .description: .describe(value); case .transfer: .transfer(value) } }
     private var valid: Bool { (try? action.validate(for: request.repo, destinations: store.destinations)) != nil }
@@ -249,7 +249,7 @@ struct ConfirmationView: View {
     private var repo: Repository { preview.repository }
     private var matches: Bool { !preview.action.requiresTyping || typedName == repo.full_name }
     var body: some View {
-        SheetFrame(symbol: symbol, tint: deleting ? .danger : .grove, title: preview.action.title + "?",
+        SheetFrame(symbol: symbol, tint: deleting ? .danger : .grove, title: preview.action.displayTitle + "?",
                    subtitle: "Signed in as \(preview.account)", width: 520) {
             ValueBox(rows: rows, tint: deleting ? Color.danger : nil)
             if let consequence {
@@ -260,7 +260,7 @@ struct ConfirmationView: View {
             if preview.action.requiresTyping {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        (Text("Type ") + Text(repo.full_name).font(.system(size: 12, design: .monospaced)) + Text(" to confirm"))
+                        (Text("Type ") + Text(repo.full_name).font(.system(size: 12, design: .monospaced)) + Text(" to Confirm"))
                             .font(.system(size: 12, weight: .medium)).lineLimit(2).truncationMode(.middle)
                         Spacer(minLength: 8)
                         CopyButton(text: repo.full_name, title: "Copy Name")

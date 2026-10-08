@@ -10,6 +10,7 @@ public struct Repository: Codable, Identifiable, Hashable, Sendable {
     public let description: String?
     public let language: String?
     public let pushed_at: String?
+    public let created_at: String?
     public let updated_at: String
     public let archived: Bool
     public let fork: Bool
@@ -22,6 +23,8 @@ public struct Repository: Codable, Identifiable, Hashable, Sendable {
     public var safeIdentity: Bool { RepositoryAction.validComponent(owner.login) && RepositoryAction.validComponent(name) && full_name == "\(owner.login)/\(name)" }
     public var canAdminister: Bool { permissions?.admin == true }
     public var pushedDate: Date? { pushed_at.flatMap { ISO8601DateFormatter().date(from: $0) } }
+    public var createdDate: Date? { created_at.flatMap { ISO8601DateFormatter().date(from: $0) } }
+    public var updatedDate: Date? { ISO8601DateFormatter().date(from: updated_at) }
     public var webURL: URL? { URL(string: "https://github.com/\(full_name)") }
     public var hasDescription: Bool { !(description ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     public var searchText: String { "\(full_name) \(description ?? "") \(language ?? "") \((topics ?? []).joined(separator: " "))" }

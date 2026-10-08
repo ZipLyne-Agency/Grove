@@ -91,6 +91,18 @@ public actor GitHubService {
         let result = try await transport.send(APIRequest(path: path)); try Self.check(result)
         return try JSONDecoder().decode(T.self, from: result.data)
     }
+    func configurationFile(_ repo: Repository, path: String) async throws -> Data? {
+        guard ServiceDiscovery.paths.contains(path), repo.safeIdentity else { throw GroveError.invalidResponse }
+        let escaped = path.split(separator: "/").map { ServiceCatalog.component(String($0)) }.joined(separator: "/")
+        let response = try await transport.send(APIRequest(path: "repos/\(repo.full_name)/contents/\(escaped)"))
+        if response.status == 404 { return nil }
+        try Self.check(response)
+        struct File: Decodable { let type: String; let encoding: String; let content: String; let size: Int }
+        guard let file = try? JSONDecoder().decode(File.self, from: response.data), file.type == "file",
+              file.encoding == "base64", file.size <= 100_000,
+              let data = Data(base64Encoded: file.content, options: .ignoreUnknownCharacters), data.count <= 100_000 else { return nil }
+        return data
+    }
     private func pages<T: Decodable>(_ path: String, query: String = "") async throws -> [T] {
         var all: [T] = []
         for page in 1...100 {

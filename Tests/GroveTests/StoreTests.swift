@@ -31,14 +31,14 @@ private actor UncertainWrite: GitHubTransport {
     #expect(store.preview?.action == .rename("first"))
     store.cancelPreview()
 }
-@MainActor @Test func consentAndEditorCannotBeReplacedByProposal() async throws {
+@MainActor @Test func refreshAndEditorBlockAnotherProposal() async throws {
     let repo = try sampleRepository()
     let store = Store(service: GitHubService(transport: NoNetwork()), loadCache: false)
     store.inventory = try sampleInventory(repo)
     store.requestRefresh()
     await store.prepare(repo, action: .delete)
     #expect(store.preview == nil)
-    store.consent = nil
+    await store.operationTask?.value
     store.requestEdit(repo, kind: .rename)
     await store.prepare(repo, action: .delete)
     #expect(store.preview == nil)
@@ -71,7 +71,9 @@ private actor UncertainWrite: GitHubTransport {
     await store.execute(preview, typedName: "")
     #expect(store.needsRefresh)
     #expect(store.lastAction == nil)
-    #expect(await cache.load()?.requiresRefresh == true)
+    let persisted = await cache.load()
+    #expect(persisted != nil, Comment(rawValue: store.message ?? "No store error"))
+    #expect(persisted?.requiresRefresh == true)
     await store.prepare(repo, action: .delete)
     #expect(store.preview == nil)
 }
@@ -107,14 +109,12 @@ private actor VerifiedRename: GitHubTransport {
     #expect(store.lastAction?.contains("verified") == true)
 }
 
-@MainActor @Test func confirmedRefreshBlocksAnotherReviewImmediately() async {
+@MainActor @Test func refreshBlocksAnotherReviewImmediately() async {
     let store = Store(service: GitHubService(transport: NoNetwork()), loadCache: false)
     store.requestRefresh()
-    guard let consent = store.consent else { Issue.record("No consent"); return }
-    store.confirmConsent(consent)
     #expect(store.operationInFlight)
-    store.requestRefresh()
     #expect(store.consent == nil)
+    store.requestRefresh()
     await store.operationTask?.value
     #expect(!store.operationInFlight)
 }
@@ -130,7 +130,7 @@ func onDeviceAssistantSmoke() async throws {
     #expect(result.action == nil)
 }
 
-@MainActor @Test func hiddenOwnersRequireConfirmationAndPersist() async throws {
+@MainActor @Test func hiddenOwnersUpdateImmediatelyAndPersist() async throws {
     let repo = try sampleRepository()
     let suite = "grove-test-\(UUID().uuidString)"
     let preferences = try #require(UserDefaults(suiteName: suite))
@@ -139,8 +139,7 @@ func onDeviceAssistantSmoke() async throws {
     store.inventory = try sampleInventory(repo)
     store.owner = "studio"
     store.requestOwnerVisibility("studio", hidden: true)
-    #expect(store.hiddenOwners.isEmpty)
-    store.confirmConsent(try #require(store.consent))
+    #expect(store.consent == nil)
     await store.queryTask?.value
     #expect(store.visible.isEmpty)
     #expect(store.owner == nil)
@@ -151,7 +150,6 @@ func onDeviceAssistantSmoke() async throws {
     let restored = Store(loadCache: false, preferences: preferences)
     #expect(restored.hiddenOwners == ["studio"])
     store.requestOwnerVisibility("studio", hidden: false)
-    store.confirmConsent(try #require(store.consent))
     await store.queryTask?.value
     #expect(store.visible.map(\.id) == [repo.id])
     #expect(store.counts.count(.all) == 1)
@@ -163,21 +161,14 @@ func onDeviceAssistantSmoke() async throws {
     store.inventory = try sampleInventory(repo)
     store.selectedID = nil
     store.requestAssistant("Propose a new description", repo: repo)
-    guard case .assistant(_, let target, let context) = store.consent?.kind else { Issue.record("No assistant consent"); return }
-    #expect(target?.id == repo.id)
-    #expect(context?.repositories.count == 1)
-    #expect(store.assistantTask == nil)
-    let original = store.consent?.id
-    store.requestAssistant("Delete", owner: "other")
-    #expect(store.consent?.id == original)
-    store.consent = nil
-    store.requestAssistant("Summarize", owner: "other")
-    guard case .assistant(_, let ownerTarget, let ownerContext) = store.consent?.kind else { Issue.record("No owner consent"); return }
-    #expect(ownerTarget == nil)
-    #expect(ownerContext?.repositories.isEmpty == true)
-    #expect(store.assistantOwner == "other")
-    #expect(store.assistantFocus == .owner)
     #expect(store.selectedID == repo.id)
+    #expect(store.assistantSubject == repo.full_name)
+    #expect(store.assistantContext?.repositories.count == 1)
+    #expect(store.consent == nil)
+    store.requestAssistant("Delete", owner: "other")
+    #expect(store.assistantSubject == repo.full_name)
+    store.assistantTask?.cancel()
+
 }
 
 @MainActor @Test func contextActionsCannotReplaceOpenReview() throws {
@@ -186,7 +177,6 @@ func onDeviceAssistantSmoke() async throws {
     store.requestEdit(repo, kind: .rename)
     store.requestOwnerVisibility("studio", hidden: true)
     store.requestCopy("https://github.com/studio/project")
-    store.requestOwnerPage("studio")
     #expect(store.consent == nil)
     #expect(store.editor?.repo.id == repo.id)
 }
@@ -196,7 +186,17 @@ func onDeviceAssistantSmoke() async throws {
     let store = Store(loadCache: false)
     store.inventory = try sampleInventory(repo)
     store.requestAssistant("Summarize archived repositories", libraryScope: .archived)
-    guard case .assistant(_, _, let context) = store.consent?.kind else { Issue.record("No scoped consent"); return }
-    #expect(context?.repositories.isEmpty == true)
+    #expect(store.assistantContext?.repositories.isEmpty == true)
     #expect(store.assistantScope == .archived)
+    store.assistantTask?.cancel()
+}
+
+@MainActor @Test func sortingChoiceSurvivesAStoreRestart() throws {
+    let suite = "grove-sorting-test-" + UUID().uuidString
+    let preferences = try #require(UserDefaults(suiteName: suite))
+    defer { preferences.removePersistentDomain(forName: suite) }
+    let store = Store(service: GitHubService(transport: NoNetwork()), loadCache: false, preferences: preferences)
+    store.sort = .createdOldest
+    let reopened = Store(service: GitHubService(transport: NoNetwork()), loadCache: false, preferences: preferences)
+    #expect(reopened.sort == .createdOldest)
 }

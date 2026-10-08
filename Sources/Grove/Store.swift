@@ -4,6 +4,7 @@ import GroveCore
 
 @MainActor @Observable
 final class Store {
+    let workspace: WorkspaceStore
     let service: GitHubService
     let cache: InventoryCache
     let preferences: UserDefaults
@@ -12,15 +13,18 @@ final class Store {
     var scope: LibraryScope = .all
     var owner: String?
     var search = ""
-    var sort: RepositorySort = .pushed
+    var sort: RepositorySort = .pushed {
+        didSet { preferences.set(sort.rawValue, forKey: "repositorySort") }
+    }
     var visible: [Repository] = []
     var selectedID: Int?
     var busy = false
     var preparing = false
     var operationInFlight = false
+    var mutationInFlight = false
     var suggestion: AssistantSuggestion?
     var needsRefresh: Bool { inventory?.requiresRefresh == true }
-    var canStartReview: Bool { !busy && !preparing && !operationInFlight && consent == nil && preview == nil && editor == nil }
+    var canStartReview: Bool { !workspace.hasRemoteReview && !busy && !preparing && !operationInFlight && consent == nil && preview == nil && editor == nil }
     var message: String?
     var lastAction: String?
     var consent: Consent?
@@ -33,6 +37,10 @@ final class Store {
     var assistantAnswer = ""
     var assistantError: String?
     var assistantQuestion: String?
+    var assistantProjectID: UUID?
+    var assistantServices: [ServiceConnection] = []
+    var assistantOpenServices: [ServiceConnection] = []
+    var assistantContext: Inventory?
     var assistantSubject: String?
     var assistantFocus: AssistantFocus = .repository
     var assistantBusy = false
@@ -48,10 +56,15 @@ final class Store {
     var destinations: [String] { inventory?.organizations.map(\.login).sorted() ?? [] }
     var title: String { owner ?? scope.rawValue }
     init(service: GitHubService = GitHubService(), cache: InventoryCache = InventoryCache(), loadCache: Bool = true, preferences: UserDefaults = .standard) {
+        workspace = WorkspaceStore(load: loadCache)
         self.service = service; self.cache = cache
         self.preferences = preferences
+        sort = preferences.string(forKey: "repositorySort").flatMap(RepositorySort.init(rawValue:)) ?? .pushed
         hiddenOwners = Set(preferences.stringArray(forKey: "hiddenOwners") ?? [])
         loadingCache = loadCache
+        workspace.repositoryOperationActive = { [weak self] in
+            guard let self else { return true }; return self.busy || self.preparing || self.operationInFlight || self.preview != nil || self.editor != nil || self.consent != nil
+        }
         if loadCache { Task {
             let cached = await cache.load()
             loadingCache = false
@@ -78,10 +91,14 @@ final class Store {
     }
     func requestRefresh() {
         guard canStartReview else { return }
-        consent = Consent(kind: .refresh, title: inventory == nil ? "Connect to GitHub?" : "Refresh repositories?",
-                          detail: "Read your GitHub account, organizations, and accessible repository metadata using your existing GitHub CLI login. This does not change your repositories.")
+        operationInFlight = true
+        operationTask = Task {
+            await refresh(); operationInFlight = false
+            await workspace.syncAll(force: true)
+        }
     }
     func refresh() async {
+        guard !busy else { return }
         busy = true; message = nil; lastAction = nil
         defer { busy = false }
         do {
@@ -91,14 +108,13 @@ final class Store {
         } catch { message = error.localizedDescription }
     }
     func requestOpen(_ repo: Repository) {
-        guard canStartReview else { return }
-        consent = Consent(kind: .open(repo), title: "Open on GitHub?", detail: "Open \(repo.full_name) in your default browser.")
+        if let url = repo.webURL { NSWorkspace.shared.open(url) }
     }
     func requestEdit(_ repo: Repository, kind: EditorKind) {
         guard canStartReview, !needsRefresh else { return }; editor = EditorRequest(repo: repo, kind: kind)
     }
     func prepare(_ repo: Repository, action: RepositoryAction) async {
-        guard let inventory, !busy, !preparing else { message = "Finish the current operation before reviewing another change."; return }
+        guard let inventory, !busy, !preparing, !operationInFlight, !workspace.hasRemoteReview else { message = "Finish the current operation before reviewing another change."; return }
         guard preview == nil, consent == nil, editor == nil else { message = "Finish the current review before starting another change."; return }
         guard !needsRefresh else { message = "Refresh GitHub before reviewing another change."; return }
         preparing = true
@@ -112,9 +128,9 @@ final class Store {
     }
     func confirmPreview(_ current: ActionPreview, typedName: String) {
         guard !operationInFlight, !busy, preview?.id == current.id else { return }
-        operationInFlight = true
+        operationInFlight = true; mutationInFlight = true
         operationTask = Task {
-            defer { operationInFlight = false }
+            defer { operationInFlight = false; mutationInFlight = false }
             await execute(current, typedName: typedName)
         }
     }
@@ -187,25 +203,31 @@ final class Store {
     }
     func requestOwnerVisibility(_ login: String, hidden: Bool) {
         guard canStartReview else { return }
-        consent = Consent(kind: .ownerVisibility(login, hidden), title: hidden ? "Hide \(login)?" : "Show \(login)?",
-                          detail: "This changes your local Grove library only. GitHub repositories and access stay as they are. Hidden owners can be restored from the sidebar.")
+        if hidden { hiddenOwners.insert(login) } else { hiddenOwners.remove(login) }
+        preferences.set(hiddenOwners.sorted(), forKey: "hiddenOwners")
+        if hidden, owner == login { owner = nil }
+        rebuild()
+        lastAction = hidden ? "Owner Hidden" : "Owner Restored"
     }
     func requestOwnerPage(_ login: String, settings: Bool = false) {
-        guard canStartReview, let encoded = login.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
-              let url = URL(string: settings ? "https://github.com/organizations/\(encoded)/settings/profile" : "https://github.com/\(encoded)") else { return }
-        consent = Consent(kind: .url(url), title: settings ? "Open organization settings?" : "Open owner on GitHub?",
-                          detail: "Open \(url.absoluteString) in your browser. Organization name and profile changes are managed on GitHub.")
+        let encoded = ServiceCatalog.component(login)
+        if let url = URL(string: settings ? "https://github.com/organizations/\(encoded)/settings/profile" : "https://github.com/\(encoded)") { NSWorkspace.shared.open(url) }
     }
-    func requestCopy(_ text: String) {
-        guard canStartReview else { return }
-        consent = Consent(kind: .copy(text), title: "Copy to clipboard?", detail: text)
+    func requestCopy(_ text: String) { Clipboard.copy(text); lastAction = "Copied" }
+    func requestAssistant() {
+        let project = workspace.projects.first { $0.id == assistantProjectID }
+        requestAssistant(assistantPrompt, repo: assistantFocus == .repository ? selected : nil, owner: assistantOwner, libraryScope: assistantScope, project: project)
     }
-    func requestAssistant() { requestAssistant(assistantPrompt, repo: selected, owner: assistantOwner, libraryScope: assistantScope) }
-    func requestAssistant(_ prompt: String, repo: Repository? = nil, owner: String? = nil, libraryScope: LibraryScope = .all) {
+    func requestProjectAssistant(_ prompt: String, project: GroveProject) {
+        requestAssistant(prompt, project: project)
+    }
+    func requestAssistant(_ prompt: String, repo: Repository? = nil, owner: String? = nil, libraryScope: LibraryScope = .all, project: GroveProject? = nil) {
         guard canStartReview, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !assistantBusy else { return }
+        assistantProjectID = project?.id
         let candidates = (inventory?.repositories ?? []).filter {
+            if let project { return project.repositoryIDs.contains($0.id) }
             if let owner { return $0.owner.login == owner }
-            return !hiddenOwners.contains($0.owner.login)
+            return $0.id == repo?.id || !hiddenOwners.contains($0.owner.login)
         }
         let repositories = RepositoryQuery.filter(candidates, scope: libraryScope, owner: owner, search: "", sort: .pushed)
         let context = inventory.map { Inventory(account: $0.account, organizations: $0.organizations, repositories: repositories,
@@ -213,20 +235,39 @@ final class Store {
         if let repo { selectedID = repo.id }
         assistantFocus = repo != nil ? .repository : owner != nil ? .owner : .library
         showAssistant = true; assistantPrompt = prompt; assistantOwner = owner; assistantScope = libraryScope
-        consent = Consent(kind: .assistant(prompt, repo, context), title: "Ask Apple Intelligence?",
-                          detail: "Question: \(prompt)\n\nContext: \(repo?.full_name ?? owner ?? libraryScope.rawValue). Use the on-device model. Grove reads the selected repository's README from GitHub. Any proposed change needs separate confirmation.")
+        runAssistant(prompt, repo: repo, context: context)
     }
     func runAssistant(_ prompt: String, repo: Repository?, context: Inventory?) {
+        assistantContext = context
+        let project = workspace.projects.first { $0.id == assistantProjectID }
+        let contextIDs = Set(context?.repositories.map(\.id) ?? [])
+        let connected = project.map { workspace.connections(for: $0) } ?? repo.map { workspace.connections(for: $0.id) }
+            ?? workspace.connections.filter { connection in
+                !connection.repositoryIDs.isDisjoint(with: contextIDs) || workspace.projects.contains { connection.projectIDs.contains($0.id) && !$0.repositoryIDs.isDisjoint(with: contextIDs) }
+            }
+        assistantServices = Array(connected.prefix(15)); assistantOpenServices = []
+        let projectContext = project.map { "Project: \($0.name)\nProject Notes (untrusted data): \(String($0.notes.prefix(1000)))\n" } ?? ""
+        let serviceContext = projectContext + connected.prefix(15).map { connection in
+            let snapshot = connection.snapshot
+            return "\(connection.provider.title): \(connection.name); resource \(connection.resourceID); environment \(connection.environment.isEmpty ? "Unspecified" : connection.environment); status \(connection.status().rawValue); checked \(snapshot?.checkedAt.ISO8601Format() ?? "Never"); " + (snapshot?.metrics.map { "\($0.label): \($0.value)" }.joined(separator: "; ") ?? "No verified metrics") + (connection.lastError.map { "; Sync error: \($0)" } ?? "")
+        }.joined(separator: "\n") + "\nRecent Service Activity:\n" + connected.flatMap { item in
+            (item.snapshot?.activity ?? []).prefix(3).map { "\(item.provider.title): \($0.title) · \($0.detail) · \($0.date?.ISO8601Format() ?? "Time Unavailable")" }
+        }.prefix(15).joined(separator: "\n")
         assistantBusy = true; assistantAnswer = ""; assistantError = nil; suggestion = nil
         assistantQuestion = prompt; assistantPrompt = ""
-        assistantSubject = repo?.full_name ?? assistantOwner ?? assistantScope.rawValue
+        assistantSubject = project?.name ?? repo?.full_name ?? assistantOwner ?? assistantScope.rawValue
+        if prompt.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().hasPrefix("open ") {
+            assistantOpenServices = ServiceResolver.resolve(prompt, in: connected)
+            assistantAnswer = assistantOpenServices.isEmpty ? "No linked dashboard matches that request in this context." : assistantOpenServices.count == 1 ? "Open the linked dashboard below." : "Choose one of these linked dashboards."
+            assistantBusy = false; return
+        }
         assistantTask = Task {
             defer { assistantBusy = false }
             do {
                 let readme: String
                 if let repo { readme = try await service.readme(repo) } else { readme = "" }
                 guard !Task.isCancelled else { return }
-                let result = try await Intelligence.answer(prompt: prompt, repo: repo, readme: readme, inventory: context)
+                let result = try await Intelligence.answer(prompt: prompt, repo: repo, readme: readme, inventory: context, serviceContext: serviceContext)
                 guard !Task.isCancelled else { return }
                 assistantAnswer = result.answer
                 if let action = result.action, let repo { suggestion = AssistantSuggestion(repo: repo, action: action) }

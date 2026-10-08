@@ -1,9 +1,19 @@
 import AppKit
 import SwiftUI
+import GroveCore
 
 @main
 struct GroveApp {
     @MainActor static func main() {
+        let lease: WorkspaceLease
+        do { lease = try WorkspaceLease() }
+        catch {
+            FileHandle.standardError.write(Data((error.localizedDescription + "\n").utf8)); exit(1)
+        }
+        withExtendedLifetime(lease) { run() }
+    }
+    @MainActor private static func run() {
+        if CommandLine.arguments.contains("--import-setup-stdin") { SetupCommand.run() }
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate
@@ -16,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let store = Store()
     var window: NSWindow!
     var status: StatusController!
+    var background: BackgroundRefresh!
     func applicationDidFinishLaunching(_ notification: Notification) {
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 800), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         window.title = "Grove"
@@ -30,13 +41,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.makeKeyAndOrderFront(nil)
         status = StatusController(store: store) { [weak self] in self?.showWindow() }
         installMenu()
+        background = BackgroundRefresh(store: store); background.start()
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { showWindow(); return true }
     func showWindow() { window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true) }
     @objc func showLibrary(_ sender: Any?) { showWindow() }
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        background.stop()
+        store.assistantTask?.cancel()
+        if !store.mutationInFlight { store.operationTask?.cancel() }
+        Task {
+            await store.operationTask?.value
+            while store.workspace.renaming || store.workspace.preparingRename {
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            await store.workspace.flush()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
     func applicationWillTerminate(_ notification: Notification) {
-        store.assistantTask?.cancel(); store.operationTask?.cancel(); store.queryTask?.cancel(); status.stop()
+        store.assistantTask?.cancel(); store.operationTask?.cancel(); store.queryTask?.cancel(); status.stop(); background.stop()
     }
     private func installMenu() {
         let main = NSMenu()

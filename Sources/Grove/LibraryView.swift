@@ -3,26 +3,25 @@ import GroveCore
 
 struct LibraryView: View {
     @Bindable var store: Store
+    @State private var ui = WorkspaceUI()
     @FocusState private var searchFocused: Bool
+    private var workspace: WorkspaceStore { store.workspace }
+    private var copied: Bool { store.lastAction == "Copied" || workspace.notice == "Copied" }
     var body: some View {
-        HStack(spacing: 0) {
-            LibrarySidebar(store: store).frame(width: 232)
-            Divider().ignoresSafeArea()
-            VStack(spacing: 0) {
-                toolbar
-                Divider()
-                notices
-                HSplitView {
-                    RepositoryList(store: store)
-                        .frame(minWidth: 360, maxWidth: .infinity, maxHeight: .infinity)
-                    Group {
-                        if store.showAssistant { AssistantView(store: store) } else { InspectorView(store: store) }
-                    }
-                    .frame(minWidth: 300, idealWidth: 340, maxWidth: 440, maxHeight: .infinity)
+        GeometryReader { geometry in
+            let compact = geometry.size.width < 1180
+            HStack(spacing: 0) {
+                LibrarySidebar(store: store, ui: ui).frame(width: compact ? 216 : 232)
+                Divider().ignoresSafeArea()
+                VStack(spacing: 0) {
+                    toolbar(compact: compact)
+                    Divider()
+                    notices
+                    content(width: geometry.size.width - (compact ? 217 : 233))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color.inspector)
             }
-            .background(Color.panel)
         }
         .ignoresSafeArea(.container, edges: .top)
         .frame(minWidth: 1040)
@@ -31,54 +30,159 @@ struct LibraryView: View {
         .onChange(of: store.owner) { store.rebuild() }
         .onChange(of: store.search) { store.rebuild() }
         .onChange(of: store.sort) { store.rebuild() }
+        .task(id: copied) {
+            guard copied else { return }
+            try? await Task.sleep(for: .seconds(1.6))
+            if store.lastAction == "Copied" { store.lastAction = nil }
+            if workspace.notice == "Copied" { workspace.notice = nil }
+        }
         .sheet(item: $store.consent) { ConsentView(store: store, item: $0) }
         .sheet(item: $store.editor) { EditorView(store: store, request: $0) }
         .sheet(item: $store.preview) { ConfirmationView(store: store, preview: $0) }
+        .sheet(item: $ui.sheet) { WorkspaceSheetView(store: store, ui: ui, sheet: $0) }
+        .sheet(item: Binding(get: { workspace.renameReview }, set: { if $0 == nil, !workspace.renaming { workspace.cancelRename() } })) {
+            RenameReviewSheet(store: store, review: $0).interactiveDismissDisabled(workspace.renaming)
+        }
         .background {
-            Button("Find") { searchFocused = true }.keyboardShortcut("f").hidden()
+            Group {
+                Button("Find") { workspace.destination = .library; searchFocused = true }.keyboardShortcut("f")
+                Button("New Project") { ui.sheet = .editProject(GroveProject(name: ""), isNew: true) }.keyboardShortcut("n")
+                Button("Settings") { workspace.destination = .settings }.keyboardShortcut(",")
+                Button("Ask Grove") { store.showAssistant.toggle() }.keyboardShortcut("a", modifiers: [.command, .shift])
+            }
+            .hidden()
+        }
+    }
+
+    // MARK: Columns
+
+    @ViewBuilder private func content(width: CGFloat) -> some View {
+        let listWidth: CGFloat = width >= 948 ? 360 : 300
+        let dock = width - listWidth - 341 >= 440
+        if workspace.destination == .settings {
+            HStack(spacing: 0) {
+                SettingsPane(store: store, ui: ui)
+                if store.showAssistant { Divider(); AssistantView(store: store).frame(width: 340) }
+            }
+        } else {
+            HStack(spacing: 0) {
+                middle.frame(width: listWidth).frame(maxHeight: .infinity).background(Color.panel)
+                Divider()
+                if store.showAssistant && !dock {
+                    AssistantView(store: store)
+                } else {
+                    detail.frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                if store.showAssistant && dock {
+                    Divider()
+                    AssistantView(store: store).frame(width: 340)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var middle: some View {
+        switch workspace.destination {
+        case .projects: ProjectsColumn(store: store, ui: ui)
+        case .connections: ConnectionsColumn(store: store, ui: ui)
+        default: RepositoryList(store: store, ui: ui)
+        }
+    }
+
+    @ViewBuilder private var detail: some View {
+        switch workspace.destination {
+        case .projects:
+            if !ui.showAllProjects, ui.projectRepositoryID != nil, store.selected != nil {
+                InspectorView(store: store, ui: ui)
+            } else if let project = workspace.selectedProject {
+                ProjectDetailView(store: store, ui: ui, project: project)
+            } else {
+                ContentUnavailableView("No Project Selected", systemImage: "square.grid.2x2",
+                                       description: Text("Choose a project, or create one to group repositories and services."))
+            }
+        case .connections:
+            if let id = ui.selectedAccountID, let account = workspace.accounts.first(where: { $0.id == id }) {
+                AccountDetailView(store: store, ui: ui, account: account)
+            } else if let connection = workspace.selectedConnection {
+                ConnectionDetailView(store: store, ui: ui, connection: connection)
+            } else {
+                ContentUnavailableView("No Connection Selected", systemImage: "powerplug",
+                                       description: Text("Choose a connection or an account to see its details."))
+            }
+        default:
+            InspectorView(store: store, ui: ui)
         }
     }
 
     // MARK: Toolbar
 
-    private var toolbar: some View {
-        HStack(spacing: 10) {
+    private func toolbar(compact: Bool) -> some View {
+        HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 1) {
-                Text(store.title).font(.system(size: 14, weight: .semibold)).lineLimit(1).truncationMode(.middle)
+                Text(title).font(.system(size: 14, weight: .semibold)).lineLimit(1).truncationMode(.middle)
                 Text(countLine).font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit().lineLimit(1)
             }
             .layoutPriority(1)
-            .contextMenu { IntelligenceMenu(store: store, owner: store.owner, scope: store.scope) }
+            .contextMenu { if workspace.destination == .library { IntelligenceMenu(store: store, owner: store.owner, scope: store.scope) } }
             Spacer(minLength: 12)
-            searchField.frame(minWidth: 180, idealWidth: 260, maxWidth: 300)
-            Menu {
-                Picker("Sort By", selection: $store.sort) {
-                    ForEach(RepositorySort.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.inline)
-            } label: {
-                Label(store.sort.rawValue, systemImage: "arrow.up.arrow.down")
+            if copied { CopiedBadge() }
+            switch workspace.destination {
+            case .library:
+                searchField.frame(width: compact ? 190 : 250)
+                sortMenu
+            case .projects:
+                Button { ui.sheet = .editProject(GroveProject(name: ""), isNew: true) } label: { Label("New Project", systemImage: "plus") }
+                    .disabled(!workspace.canEdit)
+            case .connections:
+                Button { ui.sheet = .editConnection(ServiceConnection(provider: .vercel, name: ""), isNew: true) } label: { Label("Add Connection", systemImage: "plus") }
+                    .buttonStyle(.borderedProminent).disabled(!workspace.canEdit)
+            case .settings:
+                EmptyView()
             }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .help("Sort repositories")
-            Button { store.requestRefresh() } label: {
-                if store.busy { ProgressView().controlSize(.small) }
-                else { Label(store.inventory == nil ? "Connect" : "Refresh", systemImage: "arrow.clockwise") }
+            syncButton
+            Button { store.showAssistant.toggle() } label: {
+                Label { Text("Ask Grove") } icon: { GroveMark(size: 16, thinking: store.assistantBusy, available: Intelligence.available) }
             }
-            .buttonStyle(IconButtonStyle(size: 28))
-            .keyboardShortcut("r")
-            .help(store.inventory == nil ? "Connect to GitHub (⌘R)" : "Refresh from GitHub (⌘R)")
-            .accessibilityLabel(store.busy ? "Refreshing" : store.inventory == nil ? "Connect to GitHub" : "Refresh from GitHub")
-            .disabled(store.busy || !store.canStartReview)
-            Button { store.showAssistant.toggle() } label: { Label("Ask Grove", systemImage: "sparkles") }
-                .buttonStyle(IconButtonStyle(size: 28, tint: .intelligence, active: store.showAssistant))
-                .help(store.showAssistant ? "Hide assistant" : "Ask Grove")
-                .accessibilityAddTraits(store.showAssistant ? .isSelected : [])
+            .buttonStyle(AskGroveButtonStyle(active: store.showAssistant))
+            .help(store.showAssistant ? "Hide Ask Grove (⇧⌘A)" : "Ask Grove (⇧⌘A)")
+            .accessibilityAddTraits(store.showAssistant ? .isSelected : [])
         }
-        .padding(.leading, 18).padding(.trailing, 12)
+        .controlSize(.small)
+        .padding(.leading, 18).padding(.trailing, 14)
         .frame(height: 52)
         .background(WindowDragArea())
+    }
+
+    private var syncing: Bool { store.busy || !workspace.syncing.isEmpty }
+    private var syncButton: some View {
+        Button {
+            store.requestRefresh()
+            Task { await workspace.syncAll(force: true) }
+        } label: { Label("Sync Now", systemImage: "arrow.triangle.2.circlepath") }
+        .buttonStyle(IconButtonStyle(size: 28, tint: syncing ? .grove : store.message != nil ? .caution : nil))
+        .keyboardShortcut("r")
+        .help(syncHelp)
+        .accessibilityLabel(syncHelp)
+        .disabled(syncing || !store.canStartReview)
+    }
+    private var syncHelp: String {
+        if syncing { return "Syncing" }
+        if let date = store.inventory?.fetchedAt { return "Sync Now. Updated \(GroveDates.named(date)) (⌘R)" }
+        return "Connect to GitHub (⌘R)"
+    }
+
+    private var sortMenu: some View {
+        Menu {
+            Picker("Sort By", selection: $store.sort) {
+                ForEach(RepositorySort.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.inline)
+        } label: {
+            Label(store.sort.title, systemImage: "arrow.up.arrow.down")
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Sort Repositories")
     }
 
     private var searchField: some View {
@@ -88,7 +192,7 @@ struct LibraryView: View {
                 .textFieldStyle(.plain)
                 .focused($searchFocused)
                 .onExitCommand { store.search = ""; searchFocused = false }
-                .accessibilityLabel("Search repositories")
+                .accessibilityLabel("Search Repositories")
             if !store.search.isEmpty {
                 Button { store.search = "" } label: { Label("Clear Search", systemImage: "xmark.circle.fill") }
                     .buttonStyle(IconButtonStyle(size: 18))
@@ -104,304 +208,53 @@ struct LibraryView: View {
             .strokeBorder(searchFocused ? Color.grove.opacity(0.8) : Color.clear, lineWidth: 1.5))
     }
 
+    private var title: String {
+        switch workspace.destination {
+        case .library: store.owner ?? store.scope.title
+        case .projects: ui.showAllProjects ? "All Projects" : workspace.selectedProject?.name ?? "Projects"
+        case .connections: "Connections"
+        case .settings: "Settings"
+        }
+    }
     private var countLine: String {
-        guard store.inventory != nil else { return store.loadingCache ? "Loading…" : "Not connected" }
-        let total = store.owner.map { store.counts.count(owner: $0) } ?? store.counts.count(store.scope)
-        if store.search.isEmpty { return countLabel(total, "repository", "repositories") }
-        return "\(store.visible.count.formatted()) of \(countLabel(total, "repository", "repositories"))"
+        switch workspace.destination {
+        case .projects:
+            if !ui.showAllProjects, let project = workspace.selectedProject {
+                return "Project · \(countLabel(project.repositoryIDs.count, "Repository", "Repositories")) · \(countLabel(workspace.connections(for: project).count, "Service", "Services"))"
+            }
+            return countLabel(workspace.projects.count, "Project", "Projects")
+        case .connections:
+            let attention = workspace.connections.filter { ServiceLook($0, syncing: false).attention }.count
+            return countLabel(workspace.connections.count, "Connection", "Connections") + (attention > 0 ? " · \(attention.formatted()) Need Attention" : "")
+        case .settings:
+            return "Stored on This Mac"
+        case .library:
+            guard store.inventory != nil else { return store.loadingCache ? "Loading…" : "Not Connected" }
+            let total = store.owner.map { store.counts.count(owner: $0) } ?? store.counts.count(store.scope)
+            if store.search.isEmpty { return countLabel(total, "Repository", "Repositories") }
+            return "\(store.visible.count.formatted()) of \(countLabel(total, "Repository", "Repositories"))"
+        }
     }
 
     // MARK: Notices
 
     @ViewBuilder private var notices: some View {
         if store.needsRefresh {
-            NoticeBar(text: "Changes are paused until you refresh, so Grove can confirm GitHub's current state.",
-                      symbol: "arrow.clockwise.circle", tint: .caution,
-                      actionTitle: "Refresh…", action: { store.requestRefresh() })
+            NoticeBar(text: "Changes are paused while Grove confirms GitHub's current state.",
+                      symbol: "arrow.triangle.2.circlepath", tint: .caution,
+                      actionTitle: "Sync Now", action: { store.requestRefresh() })
         }
         if let message = store.message {
             NoticeBar(text: message, symbol: "exclamationmark.triangle.fill", tint: .caution, dismiss: { store.message = nil })
         }
-        if let done = store.lastAction {
+        if let done = store.lastAction, done != "Copied" {
             NoticeBar(text: done, symbol: "checkmark.circle.fill", tint: .grove, dismiss: { store.lastAction = nil })
         }
-    }
-}
-
-// MARK: Sidebar
-
-private enum SidebarItem: Hashable { case scope(LibraryScope), owner(String) }
-
-struct LibrarySidebar: View {
-    @Bindable var store: Store
-    private var selection: Binding<SidebarItem?> {
-        Binding(get: { store.owner.map { .owner($0) } ?? .scope(store.scope) }, set: { item in
-            switch item {
-            case .scope(let scope): store.owner = nil; store.scope = scope
-            case .owner(let owner): store.scope = .all; store.owner = owner
-            case nil: break
-            }
-        })
-    }
-    private var account: String? { store.inventory?.account.login }
-    private var ownerRows: [String] {
-        let others = store.owners.filter { $0 != account }
-        if let account, store.owners.contains(account) { return [account] + others }
-        return others
-    }
-    var body: some View {
-        VStack(spacing: 0) {
-            WindowDragArea().frame(height: 44)
-            List(selection: selection) {
-                Section("Library") {
-                    ForEach(LibraryScope.allCases, id: \.self) { scope in
-                        Label(scope.rawValue, systemImage: scope.symbol)
-                            .badge(store.inventory == nil ? 0 : store.counts.count(scope))
-                            .tag(SidebarItem.scope(scope))
-                            .contextMenu { ScopeMenu(store: store, scope: scope) }
-                    }
-                }
-                Section("Owners") {
-                    if store.inventory == nil {
-                        Text(store.loadingCache ? "Loading…" : "Connect to see owners").foregroundStyle(.secondary)
-                    } else if ownerRows.isEmpty {
-                        Text("Every owner is hidden").foregroundStyle(.secondary)
-                    }
-                    ForEach(ownerRows, id: \.self) { owner in
-                        Label { Text(owner).lineLimit(1).truncationMode(.middle) } icon: {
-                            Image(systemName: owner == account ? "person.crop.circle" : "building.2")
-                        }
-                        .badge(store.counts.count(owner: owner))
-                        .help(owner)
-                        .tag(SidebarItem.owner(owner))
-                        .contextMenu { OwnerMenu(store: store, owner: owner) }
-                    }
-                    if !store.hiddenOwners.isEmpty { hiddenOwnersRow }
-                }
-            }
-            .listStyle(.sidebar)
-            .scrollContentBackground(.hidden)
-            footer
+        if let error = workspace.error, ui.sheet == nil {
+            NoticeBar(text: error, symbol: "exclamationmark.triangle.fill", tint: .caution, dismiss: { workspace.error = nil })
         }
-        .background(VisualEffectBackground(material: .sidebar).ignoresSafeArea())
-    }
-
-    private var hiddenOwnersRow: some View {
-        Menu {
-            Section("Show in Grove") {
-                ForEach(store.hiddenOwners.sorted(), id: \.self) { owner in
-                    Button("\(owner) (\(store.counts.count(owner: owner).formatted()))…") { store.requestOwnerVisibility(owner, hidden: false) }
-                }
-            }
-        } label: {
-            Label("\(store.hiddenOwners.count.formatted()) hidden", systemImage: "eye.slash")
+        if let notice = workspace.notice, notice != "Copied" {
+            NoticeBar(text: notice, symbol: "info.circle.fill", tint: .grove, dismiss: { workspace.notice = nil })
         }
-        .menuStyle(.borderlessButton)
-        .foregroundStyle(.secondary)
-        .disabled(!store.canStartReview)
-        .help("Owners hidden from this Mac. Choose one to show it again.")
-    }
-
-    private var footer: some View {
-        VStack(spacing: 10) {
-            Button { store.showAssistant.toggle() } label: {
-                HStack(spacing: 7) {
-                    Image(systemName: "sparkles").accessibilityHidden(true)
-                    Text("Ask Grove")
-                    Spacer(minLength: 0)
-                    if store.assistantBusy { ProgressView().controlSize(.mini) }
-                }
-                .font(.system(size: 12.5, weight: .semibold))
-                .foregroundStyle(Color.intelligence)
-                .padding(.horizontal, 10).frame(height: 30)
-                .background(Color.intelligence.opacity(store.showAssistant ? 0.2 : 0.11), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityAddTraits(store.showAssistant ? .isSelected : [])
-            Divider()
-            HStack(spacing: 9) {
-                Text(String((account ?? "?").prefix(1)).uppercased())
-                    .font(.system(size: 12, weight: .semibold)).foregroundStyle(.white)
-                    .frame(width: 26, height: 26)
-                    .background(account == nil ? Color.secondary : Color.grove, in: Circle())
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(account ?? "Not connected").font(.system(size: 12, weight: .semibold)).lineLimit(1).truncationMode(.middle)
-                    Group {
-                        if store.busy { Text("Refreshing from GitHub…") }
-                        else if let date = store.inventory?.fetchedAt { Text("Updated \(GroveDates.named(date))").help(GroveDates.exact(date)) }
-                        else { Text("GitHub CLI sign-in") }
-                    }
-                    .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
-                }
-                Spacer(minLength: 0)
-            }
-        }
-        .padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 12)
-    }
-}
-
-// MARK: Repository list
-
-struct RepositoryList: View {
-    @Bindable var store: Store
-    var body: some View {
-        Group {
-            if store.inventory == nil {
-                if store.loadingCache {
-                    ProgressView("Loading your library…").controlSize(.small)
-                } else {
-                    ContentUnavailableView {
-                        Label("Connect GitHub", systemImage: "link")
-                    } description: {
-                        Text("Grove reads your repositories with your GitHub CLI sign-in. Nothing on GitHub changes.")
-                    } actions: {
-                        Button("Connect…") { store.requestRefresh() }.buttonStyle(.borderedProminent).disabled(store.busy || !store.canStartReview)
-                    }
-                }
-            } else if store.visible.isEmpty {
-                emptyState
-            } else {
-                List(selection: $store.selectedID) {
-                    ForEach(store.visible) { repo in
-                        RepositoryRow(repo: repo, store: store, selected: store.selectedID == repo.id)
-                            .tag(repo.id)
-                            .contextMenu { RepositoryMenu(store: store, repo: repo) }
-                    }
-                }
-                .listStyle(.inset)
-                .scrollContentBackground(.hidden)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    @ViewBuilder private var emptyState: some View {
-        if !store.search.isEmpty {
-            ContentUnavailableView {
-                Label("No Matches", systemImage: "magnifyingglass")
-            } description: {
-                Text("Nothing in \(store.title) matches “\(store.search)”.")
-            } actions: {
-                HStack {
-                    Button("Clear Search") { store.search = "" }
-                    if store.owner != nil || store.scope != .all {
-                        Button("Search All Repositories") { store.owner = nil; store.scope = .all }
-                    }
-                }
-            }
-        } else if store.owners.isEmpty && !store.hiddenOwners.isEmpty {
-            ContentUnavailableView("Every Owner Is Hidden", systemImage: "eye.slash",
-                                   description: Text("Show an owner again from Hidden in the sidebar."))
-        } else {
-            ContentUnavailableView(emptyTitle, systemImage: store.scope.symbol, description: Text(emptyDetail))
-        }
-    }
-    private var emptyTitle: String {
-        if store.owner != nil { return "No Repositories" }
-        switch store.scope {
-        case .all: return "No Repositories"
-        case .recent: return "Nothing Pushed Recently"
-        case .missing: return "Every Repository Has a Description"
-        case .archived: return "No Archived Repositories"
-        case .forks: return "No Forks"
-        }
-    }
-    private var emptyDetail: String {
-        if let owner = store.owner { return "\(owner) has no repositories this account can see." }
-        switch store.scope {
-        case .recent: return "No repository was pushed in the last 30 days."
-        default: return "Nothing to show here."
-        }
-    }
-}
-
-struct RepositoryRow: View {
-    let repo: Repository
-    let store: Store
-    let selected: Bool
-    @State private var hovering = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private var showActions: Bool { hovering || selected }
-    var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            RepositoryGlyph(repo: repo, size: 28).padding(.top, 1)
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(repo.name).font(.system(size: 13, weight: .semibold)).lineLimit(1).truncationMode(.middle)
-                        .layoutPriority(1)
-                    if store.owner == nil {
-                        Text(repo.owner.login).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
-                    }
-                    Spacer(minLength: 8)
-                    ZStack(alignment: .trailing) {
-                        let pushed = GroveDates.pushed(repo)
-                        Text(GroveDates.short(pushed)).font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit()
-                            .help("Last pushed \(GroveDates.exact(pushed))")
-                            .opacity(showActions ? 0 : 1)
-                        if showActions { actions.transition(.opacity) }
-                    }
-                    .frame(height: 16)
-                }
-                Text(repo.hasDescription ? (repo.description ?? "") : "No description")
-                    .font(.system(size: 12))
-                    .foregroundStyle(repo.hasDescription ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
-                    .lineLimit(1)
-                meta
-            }
-        }
-        .padding(.vertical, 5)
-        .contentShape(Rectangle())
-        .onHover { inside in
-            if reduceMotion { hovering = inside } else { withAnimation(.easeOut(duration: 0.12)) { hovering = inside } }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(repo.full_name), \(repo.visibilityLabel)\(repo.archived ? ", archived" : "")")
-        .accessibilityAction(named: "Copy GitHub Link") { copyLink() }
-        .accessibilityAction(named: "Open on GitHub") { store.requestOpen(repo) }
-        .accessibilityAction(named: "Ask Grove") { ask() }
-    }
-
-    private var meta: some View {
-        HStack(spacing: 10) {
-            if let language = repo.language {
-                HStack(spacing: 4) { LanguageDot(language: language, size: 7); Text(language) }
-            }
-            Label(repo.visibilityLabel, systemImage: repo.visibilitySymbol).labelStyle(CompactLabelStyle())
-            if repo.archived { Label("Archived", systemImage: "archivebox").labelStyle(CompactLabelStyle()) }
-            if repo.fork { Label("Fork", systemImage: "arrow.triangle.branch").labelStyle(CompactLabelStyle()) }
-            if repo.stargazers_count > 0 {
-                Label(repo.stargazers_count.formatted(), systemImage: "star").labelStyle(CompactLabelStyle())
-            }
-        }
-        .font(.system(size: 11))
-        .foregroundStyle(.secondary)
-        .lineLimit(1)
-    }
-
-    private var actions: some View {
-        HStack(spacing: 1) {
-            Button { copyLink() } label: { Label("Copy GitHub Link", systemImage: "link") }
-                .help("Copy GitHub link")
-            Button { store.requestOpen(repo) } label: { Label("Open on GitHub", systemImage: "arrow.up.right.square") }
-                .help("Open on GitHub")
-            Button { ask() } label: { Label("Ask Grove", systemImage: "sparkles") }
-                .help("Ask Grove about this repository")
-                .disabled(!Intelligence.available)
-        }
-        .buttonStyle(IconButtonStyle(size: 22))
-        .disabled(!store.canStartReview)
-    }
-
-    private func copyLink() { if let url = repo.webURL { store.requestCopy(url.absoluteString) } }
-    private func ask() {
-        store.selectedID = repo.id; store.assistantFocus = .repository; store.assistantOwner = nil; store.showAssistant = true
-    }
-}
-
-struct CompactLabelStyle: LabelStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        HStack(spacing: 3) { configuration.icon.imageScale(.small); configuration.title }
     }
 }

@@ -1,109 +1,253 @@
 import SwiftUI
 import GroveCore
 
+/// Repository detail: header, then Overview, Services, Activity, and Manage tabs.
 struct InspectorView: View {
     @Bindable var store: Store
+    let ui: WorkspaceUI
+    @AppStorage("repositoryTab") private var tabName = RepositoryTab.overview.rawValue
+    @State private var width: CGFloat = 600
+    @State private var copied = false
+    private var workspace: WorkspaceStore { store.workspace }
+    private var tab: Binding<RepositoryTab> {
+        Binding(get: { RepositoryTab(rawValue: tabName) ?? .overview }, set: { tabName = $0.rawValue })
+    }
     var body: some View {
         Group {
             if let repo = store.selected {
-                ScrollView { details(repo).padding(20) }
-                    .contextMenu { RepositoryMenu(store: store, repo: repo) }
+                detail(repo)
             } else if store.inventory == nil {
                 ContentUnavailableView("No Details Yet", systemImage: "sidebar.right",
                                        description: Text("Connect GitHub to see repository details here."))
             } else {
                 ContentUnavailableView("No Selection", systemImage: "sidebar.right",
-                                       description: Text("Select a repository to see its details and actions."))
+                                       description: Text("Select a repository to see its details, services, and actions."))
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.inspector)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
     }
 
-    private func details(_ repo: Repository) -> some View {
-        VStack(alignment: .leading, spacing: 20) {
+    private func detail(_ repo: Repository) -> some View {
+        let services = workspace.connections(for: repo.id)
+        return VStack(spacing: 0) {
             header(repo)
-            quickActions(repo)
-            about(repo)
-            facts(repo)
-            manage(repo)
+            DetailTabs(tabs: RepositoryTab.allCases, selection: tab, counts: [.services: services.count])
+                .padding(.top, 14)
+            ScrollView {
+                Group {
+                    switch tab.wrappedValue {
+                    case .overview: overview(repo, services: services)
+                    case .services: RepositoryServicesTab(store: store, ui: ui, repo: repo, services: services)
+                    case .activity: ActivityList(items: ActivityFeed.items(connections: services, repositories: [repo]))
+                    case .manage: RepositoryManageTab(store: store, ui: ui, repo: repo)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, width >= 600 ? 24 : 20).padding(.vertical, 18)
+            }
+            .scrollIndicators(.never)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .contextMenu { RepositoryMenu(store: store, repo: repo) }
     }
+
+    // MARK: Header
 
     private func header(_ repo: Repository) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 12) {
-                RepositoryGlyph(repo: repo, size: 38)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(repo.name).font(.system(size: 18, weight: .semibold))
-                        .lineLimit(3).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-                    Text(repo.full_name).font(.system(size: 11.5, design: .monospaced)).foregroundStyle(.secondary)
-                        .lineLimit(2).truncationMode(.middle).textSelection(.enabled)
-                }
+            if width >= 560 {
+                HStack(alignment: .top, spacing: 12) { identity(repo); actions(repo) }
+            } else {
+                identity(repo)
+                actions(repo)
             }
             FlowLayout(spacing: 6) {
                 GroveTag(text: repo.visibilityLabel, symbol: repo.visibilitySymbol)
+                GroveTag(text: repo.canAdminister ? "Admin" : "No Admin Access", symbol: repo.canAdminister ? "checkmark.shield" : "shield.slash")
+                if let language = repo.language { GroveTag(text: language) }
                 if repo.archived { GroveTag(text: "Archived", symbol: "archivebox", tint: .caution) }
                 if repo.fork { GroveTag(text: "Fork", symbol: "arrow.triangle.branch") }
-                GroveTag(text: repo.canAdminister ? "Admin" : "No admin access", symbol: repo.canAdminister ? "checkmark.shield" : "shield.slash")
             }
+            .padding(.leading, 52)
+        }
+        .padding(.horizontal, width >= 600 ? 24 : 20).padding(.top, 18)
+    }
+    private func identity(_ repo: Repository) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            RepositoryGlyph(repo: repo, size: 40)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(repo.name).font(.system(size: width >= 560 ? 20 : 18, weight: .semibold))
+                    .lineLimit(2).truncationMode(.middle).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                Text(repo.full_name).font(.system(size: 11.5, design: .monospaced)).foregroundStyle(.secondary)
+                    .lineLimit(1).truncationMode(.middle).textSelection(.enabled).help(repo.full_name)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
-
-    private func quickActions(_ repo: Repository) -> some View {
-        HStack(spacing: 8) {
-            Button { store.requestOpen(repo) } label: { Label("Open", systemImage: "arrow.up.right.square").frame(maxWidth: .infinity) }
+    private func actions(_ repo: Repository) -> some View {
+        HStack(spacing: 6) {
+            Button { store.requestOpen(repo) } label: { Label("Open", systemImage: "arrow.up.right") }
                 .help("Open \(repo.full_name) on GitHub")
-            Button { if let url = repo.webURL { store.requestCopy(url.absoluteString) } } label: {
-                Label("Copy Link", systemImage: "link").frame(maxWidth: .infinity)
-            }.help("Copy the GitHub link")
+            Menu {
+                Button("Copy Link") { if let url = repo.webURL { copy(url.absoluteString) } }
+                Button("Copy Full Name") { copy(repo.full_name) }
+                Button("Copy Clone Command") { copy(repo.cloneCommand) }
+            } label: {
+                Label(copied ? "Copied" : "Copy Link", systemImage: copied ? "checkmark" : "link")
+                    .foregroundStyle(copied ? AnyShapeStyle(Color.groveInk) : AnyShapeStyle(.primary))
+            } primaryAction: {
+                if let url = repo.webURL { copy(url.absoluteString) }
+            }
+            .fixedSize()
+            .accessibilityLabel(copied ? "Copied" : "Copy Link")
             Button {
-                store.selectedID = repo.id; store.assistantFocus = .repository; store.assistantOwner = nil; store.showAssistant = true
-            } label: { Label("Ask", systemImage: "sparkles").frame(maxWidth: .infinity) }
-                .tint(.intelligence)
-                .help("Ask Grove about this repository")
-                .disabled(!Intelligence.available)
+                store.selectedID = repo.id; store.assistantFocus = .repository; store.assistantProjectID = nil
+                store.assistantOwner = nil; store.showAssistant = true
+            } label: { Label { Text("Ask") } icon: { GroveMark(size: 15, available: Intelligence.available) } }
+                .buttonStyle(AskGroveButtonStyle(active: store.showAssistant))
+                .help("Ask Grove About This Repository")
         }
         .controlSize(.regular)
-        .disabled(!store.canStartReview)
+    }
+    private func copy(_ text: String) {
+        Clipboard.copy(text); copied = true
+        Task { try? await Task.sleep(for: .seconds(1.6)); copied = false }
     }
 
-    private func about(_ repo: Repository) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            SectionHeader("About")
-            if repo.hasDescription {
-                Text(repo.description ?? "").font(.system(size: 13)).lineSpacing(2)
-                    .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-            } else {
-                Text("No description").font(.system(size: 13)).foregroundStyle(.secondary)
-                if repo.canAdminister {
-                    Button("Add a Description…") { store.requestEdit(repo, kind: .description) }
-                        .buttonStyle(.link).font(.system(size: 12))
-                        .disabled(!store.canStartReview || store.needsRefresh)
+    // MARK: Overview
+
+    /// Two columns only when the summary column can keep a readable width; otherwise it stacks below Details.
+    @ViewBuilder private func overview(_ repo: Repository, services: [ServiceConnection]) -> some View {
+        let content = width - 48
+        let summaryWidth = min(320, max(260, (content - 28) * 0.38))
+        if content - summaryWidth - 28 >= 380 {
+            HStack(alignment: .top, spacing: 28) {
+                primary(repo).frame(maxWidth: .infinity, alignment: .leading)
+                secondary(repo, services: services).frame(width: summaryWidth, alignment: .leading)
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 20) { primary(repo); secondary(repo, services: services) }
+        }
+    }
+
+    private func primary(_ repo: Repository) -> some View {
+        VStack(alignment: .leading, spacing: 20) {
+            DetailSection(title: "Project") { projectChips(repo) }
+            DetailSection(title: "About") {
+                if repo.hasDescription {
+                    Text(repo.description ?? "").font(.system(size: 13)).lineSpacing(2)
+                        .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                } else {
+                    Text("No Description").font(.system(size: 13)).foregroundStyle(.secondary)
+                    if repo.canAdminister {
+                        Button("Add a Description…") { store.requestEdit(repo, kind: .description) }
+                            .buttonStyle(.link).font(.system(size: 12))
+                            .disabled(!store.canStartReview || store.needsRefresh)
+                    }
+                }
+                if let topics = repo.topics, !topics.isEmpty {
+                    FlowLayout(spacing: 5) { ForEach(topics, id: \.self) { GroveTag(text: $0, tint: .groveInk) } }.padding(.top, 2)
                 }
             }
-            if let topics = repo.topics, !topics.isEmpty {
-                FlowLayout(spacing: 5) { ForEach(topics, id: \.self) { GroveTag(text: $0, tint: .grove) } }
-                    .padding(.top, 2)
+            facts(repo)
+            DetailSection(title: "Clone") {
+                HStack(spacing: 8) {
+                    Text(repo.cloneCommand).font(.system(size: 11.5, design: .monospaced)).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button { copy(repo.cloneCommand) } label: { Label("Copy Clone Command", systemImage: copied ? "checkmark" : "doc.on.doc") }
+                        .buttonStyle(IconButtonStyle(size: 24, tint: copied ? .groveInk : nil)).help("Copy Clone Command")
+                }
+                .padding(.leading, 10).padding(.trailing, 4).frame(height: 32)
+                .background(Color.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.hairline.opacity(0.7)))
             }
+        }
+    }
+
+    private func secondary(_ repo: Repository, services: [ServiceConnection]) -> some View {
+        VStack(alignment: .leading, spacing: 20) {
+            DetailSection(title: "Services", caption: services.compactMap { $0.snapshot?.checkedAt }.max().map { "Checked \(GroveDates.named($0))" }) {
+                if services.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("No Services Yet").font(.system(size: 12, weight: .semibold))
+                        Text("Connect the tools this repository ships with, or let Grove look for them in its configuration.")
+                            .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        ViewThatFits(in: .horizontal) {
+                            HStack(spacing: 6) { emptyServiceActions(repo) }
+                            VStack(alignment: .leading, spacing: 6) { emptyServiceActions(repo) }
+                        }
+                        .controlSize(.small).disabled(!workspace.canEdit)
+                    }
+                } else {
+                    TableBox {
+                        ForEach(Array(services.prefix(5))) { connection in
+                            ServiceRow(store: store, ui: ui, connection: connection, context: .repository(repo.id))
+                        }
+                    }
+                    Button("View All Services") { tab.wrappedValue = .services }.buttonStyle(.link).font(.system(size: 12))
+                }
+            }
+            DetailSection(title: "Recent Activity") {
+                ActivityList(items: ActivityFeed.items(connections: services, repositories: [repo]), limit: 3)
+            }
+        }
+    }
+
+    @ViewBuilder private func emptyServiceActions(_ repo: Repository) -> some View {
+        Button("Discover Services") { ui.sheet = .discover(repo) }.fixedSize()
+        Button("Add Connection") { ui.sheet = .editConnection(ServiceConnection(provider: .vercel, name: "", repositoryIDs: [repo.id]), isNew: true) }.fixedSize()
+    }
+
+    private func projectChips(_ repo: Repository) -> some View {
+        let memberships = workspace.archive.projects(for: repo.id).sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        return FlowLayout(spacing: 6) {
+            if memberships.isEmpty {
+                Text("Not in a Project").font(.system(size: 12)).foregroundStyle(.secondary).frame(height: 30)
+            }
+            ForEach(memberships) { project in
+                Button {
+                    workspace.destination = .projects; workspace.selectedProjectID = project.id
+                    ui.showAllProjects = false; ui.projectRepositoryID = nil
+                } label: {
+                    HStack(spacing: 7) {
+                        ProjectTile(project: project, size: 18)
+                        Text(project.name).font(.system(size: 12.5, weight: .semibold)).lineLimit(1).truncationMode(.tail)
+                        Text("\(countLabel(project.repositoryIDs.count, "Repository", "Repositories")) · \(countLabel(workspace.connections(for: project).count, "Service", "Services"))")
+                            .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                        Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)).foregroundStyle(.tertiary)
+                    }
+                    .padding(.horizontal, 8).frame(height: 30)
+                    .background(Color.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.hairline.opacity(0.7)))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Show \(project.name)")
+            }
+            ProjectMembershipMenu(store: store, ui: ui, repo: repo, title: "Add to Project")
         }
     }
 
     private func facts(_ repo: Repository) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            SectionHeader("Details")
+        DetailSection(title: "Details") {
             Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 7) {
                 fact("Language") {
                     if let language = repo.language { HStack(spacing: 5) { LanguageDot(language: language); Text(language) } }
-                    else { Text("Not detected").foregroundStyle(.secondary) }
+                    else { Text("Not Detected").foregroundStyle(.secondary) }
                 }
-                fact("Default branch") { Text(repo.default_branch).font(.system(size: 12, design: .monospaced)).lineLimit(1).truncationMode(.middle) }
+                fact("Default Branch") { Text(repo.default_branch).font(.system(size: 12, design: .monospaced)).lineLimit(1).truncationMode(.middle) }
+                fact("Open Issues & PRs") { Text(repo.open_issues_count.formatted()).monospacedDigit() }
                 fact("Stars") { Text(repo.stargazers_count.formatted()).monospacedDigit() }
-                fact("Open issues & PRs") { Text(repo.open_issues_count.formatted()).monospacedDigit() }
-                fact("Last pushed") {
+                fact("Created") {
+                    if let created = repo.createdDate {
+                        Text(created.formatted(date: .abbreviated, time: .omitted)).help(GroveDates.exact(created))
+                    } else { Text("Unknown").foregroundStyle(.secondary) }
+                }
+                fact("Last Updated") { Text(GroveDates.named(repo.updatedDate)).help(GroveDates.exact(repo.updatedDate)) }
+                fact("Last Pushed") {
                     let pushed = GroveDates.pushed(repo)
-                    Text(GroveDates.named(pushed)).help(GroveDates.exact(pushed))
+                    Text(pushed == nil ? "Unknown" : GroveDates.named(pushed)).help(GroveDates.exact(pushed))
                 }
             }
             .font(.system(size: 12))
@@ -111,305 +255,8 @@ struct InspectorView: View {
     }
     private func fact<Value: View>(_ label: String, @ViewBuilder value: () -> Value) -> some View {
         GridRow {
-            Text(label).foregroundStyle(.secondary).gridColumnAlignment(.leading)
+            Text(label).foregroundStyle(.secondary).frame(width: 132, alignment: .leading).gridColumnAlignment(.leading)
             value().frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    private func manage(_ repo: Repository) -> some View {
-        let reason = manageBlockedReason(repo)
-        return VStack(alignment: .leading, spacing: 8) {
-            SectionHeader("Manage")
-            if let reason {
-                Label(reason, systemImage: "info.circle").font(.system(size: 11)).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            GroupedRows {
-                Button { store.requestEdit(repo, kind: .rename) } label: { manageLabel("Rename…", "pencil") }
-                Button { store.requestEdit(repo, kind: .description) } label: { manageLabel("Edit Description…", "text.alignleft") }
-                Button { store.requestEdit(repo, kind: .transfer) } label: { manageLabel("Transfer to Organization…", "arrow.right.arrow.left") }
-                Button { Task { await store.prepare(repo, action: .archive(!repo.archived)) } } label: {
-                    manageLabel(repo.archived ? "Unarchive…" : "Archive…", "archivebox")
-                }
-            }
-            .buttonStyle(RowButtonStyle())
-            GroupedRows {
-                Button { Task { await store.prepare(repo, action: .delete) } } label: { manageLabel("Delete Repository…", "trash") }
-                    .buttonStyle(RowButtonStyle(destructive: true))
-            }
-            .padding(.top, 6)
-            Text("Each change opens a review before anything is sent to GitHub. Transfer and deletion ask for the full name.")
-                .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-        }
-        .disabled(reason != nil)
-    }
-    private func manageLabel(_ title: String, _ symbol: String) -> some View {
-        HStack(spacing: 9) {
-            Image(systemName: symbol).frame(width: 15).accessibilityHidden(true)
-            Text(title)
-            Spacer(minLength: 0)
-        }
-    }
-    private func manageBlockedReason(_ repo: Repository) -> String? {
-        if !repo.canAdminister { return "You need admin access to change this repository." }
-        if store.needsRefresh { return "Refresh first so Grove can confirm GitHub's current state." }
-        if !store.canStartReview { return "Finish the current task first." }
-        return nil
-    }
-}
-
-struct AssistantView: View {
-    @Bindable var store: Store
-    @FocusState private var composerFocused: Bool
-    private var available: Bool { Intelligence.available }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 14) {
-                        targetPicker
-                        if !available { unavailableCard }
-                        conversation
-                        if showPresets { presets }
-                        Color.clear.frame(height: 1).id("end")
-                    }
-                    .padding(16)
-                }
-                .onChange(of: store.assistantAnswer) { proxy.scrollTo("end", anchor: .bottom) }
-                .onChange(of: store.suggestion?.repo.id) { proxy.scrollTo("end", anchor: .bottom) }
-            }
-            Divider()
-            composer.padding(12)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.inspector)
-    }
-
-    private var header: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "sparkles").foregroundStyle(Color.intelligence).accessibilityHidden(true)
-            Text("Ask Grove").font(.system(size: 14, weight: .semibold)).accessibilityAddTraits(.isHeader)
-            Spacer()
-            Button { store.showAssistant = false } label: { Label("Close Assistant", systemImage: "xmark") }
-                .buttonStyle(IconButtonStyle(size: 24))
-                .help("Close and show details")
-        }
-        .padding(.horizontal, 16).frame(height: 44)
-    }
-
-    // MARK: Target
-
-    private var focus: Binding<AssistantFocus> {
-        Binding(get: { store.assistantFocus }, set: { next in
-            store.assistantFocus = next
-            switch next {
-            case .repository: store.assistantOwner = nil
-            case .owner: store.assistantOwner = store.owner ?? store.selected?.owner.login ?? store.assistantOwner
-            case .library: store.assistantOwner = nil; store.assistantScope = store.owner == nil ? store.scope : .all
-            }
-        })
-    }
-    private var targetRepo: Repository? { store.assistantFocus == .repository ? store.selected : nil }
-    private var targetReady: Bool {
-        switch store.assistantFocus {
-        case .repository: store.selected != nil
-        case .owner: store.assistantOwner != nil
-        case .library: true
-        }
-    }
-    private var targetCount: Int {
-        switch store.assistantFocus {
-        case .repository: 1
-        case .owner: store.assistantOwner.map { store.counts.count(owner: $0) } ?? 0
-        case .library: store.counts.count(store.assistantScope)
-        }
-    }
-    private var targetDescription: String {
-        switch store.assistantFocus {
-        case .repository: store.selected?.full_name ?? "Select a repository in the list."
-        case .owner: store.assistantOwner.map { "\($0) · \(countLabel(targetCount, "repository", "repositories"))" } ?? "Choose an owner in the sidebar."
-        case .library: "\(store.assistantScope.rawValue) · \(countLabel(targetCount, "repository", "repositories"))"
-        }
-    }
-
-    private var targetPicker: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            SectionHeader("Asking about")
-            Picker("Asking about", selection: focus) {
-                ForEach(AssistantFocus.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented).labelsHidden()
-            .disabled(store.assistantBusy)
-            Text(targetDescription)
-                .font(store.assistantFocus == .repository && targetReady ? .system(size: 12, design: .monospaced) : .system(size: 12))
-                .foregroundStyle(.secondary).lineLimit(2).truncationMode(.middle)
-            if store.assistantFocus != .repository && targetCount > 35 {
-                Text("Answers consider the 35 most recently pushed.").font(.system(size: 11)).foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private var unavailableCard: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Label("Apple Intelligence isn't available", systemImage: "exclamationmark.triangle")
-                .font(.system(size: 12, weight: .semibold)).foregroundStyle(Color.caution)
-            Text("Turn it on in System Settings › Apple Intelligence & Siri on a supported Mac. Your library still works without it.")
-                .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(12).frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.caution.opacity(0.1), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-    }
-
-    // MARK: Conversation
-
-    private var showPresets: Bool { available && !store.assistantBusy && store.assistantAnswer.isEmpty && store.suggestion == nil }
-
-    @ViewBuilder private var conversation: some View {
-        if let question = store.assistantQuestion {
-            VStack(alignment: .trailing, spacing: 3) {
-                Text(question).font(.system(size: 12.5)).textSelection(.enabled)
-                    .padding(.horizontal, 11).padding(.vertical, 8)
-                    .background(Color.intelligence.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                if let subject = store.assistantSubject {
-                    Text("About \(subject)").font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .trailing)
-            .padding(.leading, 30)
-        }
-        if store.assistantBusy {
-            HStack(spacing: 9) {
-                ProgressView().controlSize(.small)
-                Text("Thinking on this Mac…").font(.system(size: 12)).foregroundStyle(.secondary)
-                Spacer()
-                Button("Stop") { store.assistantTask?.cancel() }.controlSize(.small)
-            }
-        } else if let error = store.assistantError {
-            Label {
-                Text(error).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-            } icon: { Image(systemName: "exclamationmark.triangle").foregroundStyle(Color.caution) }
-            .padding(12).frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.caution.opacity(0.1), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-        } else if !store.assistantAnswer.isEmpty {
-            Text(store.assistantAnswer).font(.system(size: 12.5)).lineSpacing(3)
-                .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-                .padding(12).frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.panel, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Color.hairline.opacity(0.6)))
-        } else if store.assistantQuestion != nil {
-            Text("Stopped before an answer.").font(.system(size: 12)).foregroundStyle(.secondary)
-        }
-        if let suggestion = store.suggestion, !store.assistantBusy { proposal(suggestion) }
-    }
-
-    private func proposal(_ suggestion: AssistantSuggestion) -> some View {
-        let deleting = suggestion.action == .delete
-        let blocked = !store.canStartReview || store.needsRefresh || !suggestion.repo.canAdminister
-        return VStack(alignment: .leading, spacing: 8) {
-            Text("Suggested change").font(.system(size: 11, weight: .semibold)).foregroundStyle(Color.intelligence)
-            Text(suggestion.action.title).font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(deleting ? AnyShapeStyle(Color.danger) : AnyShapeStyle(.primary))
-            Text(suggestion.repo.full_name).font(.system(size: 11.5, design: .monospaced)).foregroundStyle(.secondary)
-                .lineLimit(2).truncationMode(.middle)
-            if let detail = proposalDetail(suggestion) {
-                Text(detail).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-            }
-            HStack(spacing: 8) {
-                Button("Dismiss") { store.suggestion = nil }
-                Spacer()
-                Button("Review Change…") { store.reviewSuggestion() }
-                    .buttonStyle(.borderedProminent).tint(deleting ? .danger : .intelligence)
-                    .disabled(blocked)
-            }
-            .controlSize(.small).padding(.top, 2)
-            Text(blocked && store.needsRefresh ? "Refresh first so Grove can confirm GitHub's current state."
-                 : !suggestion.repo.canAdminister ? "You need admin access to apply this change."
-                 : "Nothing changes until you confirm in the review.")
-                .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(12).frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.panel, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Color.intelligence.opacity(0.45)))
-    }
-    private func proposalDetail(_ suggestion: AssistantSuggestion) -> String? {
-        switch suggestion.action {
-        case .rename(let name): "New name: \(name)"
-        case .describe(let text): text.isEmpty ? "Remove the description." : "“\(text)”"
-        case .transfer(let owner): "To \(owner)/\(suggestion.repo.name)"
-        case .archive(let archive): archive ? "Make the repository read-only." : "Make the repository writable again."
-        case .delete: "Permanently remove it from GitHub. The review asks for the full name."
-        }
-    }
-
-    // MARK: Presets and composer
-
-    private var presetList: [AssistantPreset] {
-        if store.assistantFocus == .repository, let repo = store.selected { return AssistantPresets.repository(repo, includeDeletion: false) }
-        return AssistantPresets.collection
-    }
-    private var presets: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            SectionHeader("Suggestions")
-            GroupedRows {
-                ForEach(presetList) { preset in
-                    Button { ask(preset.prompt) } label: {
-                        HStack(spacing: 9) {
-                            Image(systemName: preset.symbol).frame(width: 15).foregroundStyle(Color.intelligence).accessibilityHidden(true)
-                            Text(preset.title)
-                            Spacer(minLength: 0)
-                            Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)).foregroundStyle(.tertiary)
-                        }
-                    }
-                }
-            }
-            .buttonStyle(RowButtonStyle())
-            .disabled(!canAsk(presetPrompt: true))
-        }
-    }
-
-    private var composer: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .bottom, spacing: 8) {
-                TextField(placeholder, text: $store.assistantPrompt, axis: .vertical)
-                    .textFieldStyle(.plain).font(.system(size: 12.5))
-                    .lineLimit(1...5)
-                    .focused($composerFocused)
-                    .disabled(!available || store.assistantBusy)
-                    .accessibilityLabel("Question")
-                Button { ask(store.assistantPrompt) } label: { Label("Ask", systemImage: "arrow.up") }
-                    .labelStyle(.iconOnly)
-                    .buttonStyle(.borderedProminent).tint(.intelligence)
-                    .keyboardShortcut(.return, modifiers: .command)
-                    .help("Ask (⌘↩)")
-                    .disabled(!canAsk(presetPrompt: false))
-            }
-            .padding(.horizontal, 10).padding(.vertical, 8)
-            .background(Color.panel, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .strokeBorder(composerFocused ? Color.intelligence.opacity(0.7) : Color.hairline, lineWidth: composerFocused ? 1.5 : 1))
-            Text("Runs on this Mac. You approve each question, and a suggested change opens its own review.")
-                .font(.system(size: 10.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-        }
-    }
-    private var placeholder: String {
-        switch store.assistantFocus {
-        case .repository: "Ask about this repository"
-        case .owner: "Ask about this owner's repositories"
-        case .library: "Ask about your library"
-        }
-    }
-    private func canAsk(presetPrompt: Bool) -> Bool {
-        available && !store.assistantBusy && store.canStartReview && targetReady && store.inventory != nil &&
-            (presetPrompt || !store.assistantPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-    }
-    private func ask(_ prompt: String) {
-        switch store.assistantFocus {
-        case .repository: store.requestAssistant(prompt, repo: store.selected)
-        case .owner: store.requestAssistant(prompt, owner: store.assistantOwner)
-        case .library: store.requestAssistant(prompt, libraryScope: store.assistantScope)
         }
     }
 }

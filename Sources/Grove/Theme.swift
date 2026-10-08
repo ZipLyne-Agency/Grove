@@ -9,11 +9,25 @@ extension Color {
             ? NSColor(srgbRed: 0.36, green: 0.76, blue: 0.56, alpha: 1)
             : NSColor(srgbRed: 0.18, green: 0.49, blue: 0.35, alpha: 1)
     })
-    static let intelligence = Color(nsColor: NSColor(name: "GroveIntelligence") { appearance in
+    /// Text and icons that sit on a selection plate, and positive provider states.
+    static let groveInk = Color(nsColor: NSColor(name: "GroveInk") { appearance in
         appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            ? NSColor(srgbRed: 0.72, green: 0.60, blue: 0.98, alpha: 1)
-            : NSColor(srgbRed: 0.36, green: 0.21, blue: 0.66, alpha: 1)
+            ? NSColor(srgbRed: 0.56, green: 0.85, blue: 0.70, alpha: 1)
+            : NSColor(srgbRed: 0.12, green: 0.35, blue: 0.25, alpha: 1)
     })
+    /// Forest green row plate used instead of the system accent for every Grove selection.
+    static let selection = Color(nsColor: NSColor(name: "GroveSelection") { appearance in
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor(srgbRed: 0.36, green: 0.76, blue: 0.56, alpha: 0.20)
+            : NSColor(srgbRed: 0.18, green: 0.49, blue: 0.35, alpha: 0.15)
+    })
+    /// Warm accent reserved for Ask Grove.
+    static let ember = Color(nsColor: NSColor(name: "GroveEmber") { appearance in
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor(srgbRed: 0.94, green: 0.64, blue: 0.38, alpha: 1)
+            : NSColor(srgbRed: 0.71, green: 0.33, blue: 0.10, alpha: 1)
+    })
+    static let intelligence = ember
     static let danger = Color(nsColor: NSColor(name: "GroveDanger") { appearance in
         appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
             ? NSColor(srgbRed: 1.0, green: 0.45, blue: 0.42, alpha: 1)
@@ -21,8 +35,8 @@ extension Color {
     })
     static let caution = Color(nsColor: NSColor(name: "GroveCaution") { appearance in
         appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            ? NSColor(srgbRed: 1.0, green: 0.74, blue: 0.35, alpha: 1)
-            : NSColor(srgbRed: 0.62, green: 0.38, blue: 0.0, alpha: 1)
+            ? NSColor(srgbRed: 0.92, green: 0.77, blue: 0.32, alpha: 1)
+            : NSColor(srgbRed: 0.49, green: 0.38, blue: 0.0, alpha: 1)
     })
     static let canvas = Color(nsColor: .windowBackgroundColor)
     static let panel = Color(nsColor: .controlBackgroundColor)
@@ -61,6 +75,49 @@ extension Color {
         case "Lua": Color(hex: 0x000080)
         case "Jupyter Notebook": Color(hex: 0xDA5B0B)
         default: Color.secondary
+        }
+    }
+}
+
+extension LibraryScope {
+    var title: String {
+        switch self {
+        case .all: "All Repositories"
+        case .recent: "Recently Pushed"
+        case .missing: "Needs a Description"
+        case .archived: "Archived"
+        case .forks: "Forks"
+        }
+    }
+}
+
+extension RepositorySort {
+    var title: String {
+        switch self {
+        case .createdNewest: "Created: Newest First"
+        case .createdOldest: "Created: Oldest First"
+        case .pushed: "Pushed: Newest First"
+        case .pushedOldest: "Pushed: Oldest First"
+        case .updatedNewest: "Updated: Newest First"
+        case .updatedOldest: "Updated: Oldest First"
+        case .name: "Name: A to Z"
+        case .nameDescending: "Name: Z to A"
+        case .stars: "Stars: Most First"
+        case .starsFewest: "Stars: Fewest First"
+        case .issuesMost: "Issues & PRs: Most First"
+        case .issuesFewest: "Issues & PRs: Fewest First"
+        }
+    }
+}
+
+extension RepositoryAction {
+    var displayTitle: String {
+        switch self {
+        case .rename: "Rename Repository"
+        case .describe: "Update Description"
+        case .transfer: "Transfer Repository"
+        case .archive(let value): value ? "Archive Repository" : "Unarchive Repository"
+        case .delete: "Delete Repository"
         }
     }
 }
@@ -158,151 +215,9 @@ struct SectionHeader: View {
     }
 }
 
-/// Small borderless icon button with a hover plate, used in toolbars and hover actions.
-struct IconButtonStyle: ButtonStyle {
-    var size: CGFloat = 26
-    var tint: Color? = nil
-    var active = false
-    func makeBody(configuration: Configuration) -> some View {
-        IconButtonBody(configuration: configuration, size: size, tint: tint, active: active)
-    }
-}
-private struct IconButtonBody: View {
-    let configuration: ButtonStyleConfiguration
-    let size: CGFloat
-    let tint: Color?
-    let active: Bool
-    @State private var hovering = false
-    @Environment(\.isEnabled) private var isEnabled
-    var body: some View {
-        configuration.label
-            .font(.system(size: max(11, size * 0.5), weight: .medium))
-            .labelStyle(.iconOnly)
-            .foregroundStyle(tint.map { AnyShapeStyle($0) } ?? AnyShapeStyle(.secondary))
-            .frame(width: size, height: size)
-            .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(Color.primary.opacity(configuration.isPressed ? 0.14 : (hovering || active) ? 0.08 : 0)))
-            .contentShape(Rectangle())
-            .opacity(isEnabled ? 1 : 0.35)
-            .onHover { hovering = $0 }
-    }
-}
-
-/// Full-width list-style row button for grouped actions.
-struct RowButtonStyle: ButtonStyle {
-    var destructive = false
-    func makeBody(configuration: Configuration) -> some View {
-        RowButtonBody(configuration: configuration, destructive: destructive)
-    }
-}
-private struct RowButtonBody: View {
-    let configuration: ButtonStyleConfiguration
-    let destructive: Bool
-    @State private var hovering = false
-    @Environment(\.isEnabled) private var isEnabled
-    var body: some View {
-        configuration.label
-            .font(.system(size: 12))
-            .foregroundStyle(destructive ? AnyShapeStyle(Color.danger) : AnyShapeStyle(.primary))
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 10)
-            .frame(minHeight: 30)
-            .background(Color.primary.opacity(configuration.isPressed ? 0.1 : (hovering && isEnabled) ? 0.05 : 0))
-            .contentShape(Rectangle())
-            .opacity(isEnabled ? 1 : 0.45)
-            .onHover { hovering = $0 }
-    }
-}
-
-/// Rounded container with hairline dividers between its rows.
-struct GroupedRows<Content: View>: View {
-    @ViewBuilder let content: Content
-    var body: some View {
-        VStack(spacing: 0) {
-            Group(subviews: content) { subviews in
-                ForEach(Array(subviews.enumerated()), id: \.offset) { index, subview in
-                    if index > 0 { Divider().padding(.leading, 34) }
-                    subview
-                }
-            }
-        }
-        .background(Color.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.hairline.opacity(0.6)))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-    }
-}
-
-struct FlowLayout: Layout {
-    var spacing: CGFloat = 6
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let limit = proposal.width ?? .infinity
-        var x: CGFloat = 0, y: CGFloat = 0, row: CGFloat = 0, widest: CGFloat = 0
-        for view in subviews {
-            var size = view.sizeThatFits(.unspecified)
-            size.width = min(size.width, limit)
-            if x > 0, x + size.width > limit { x = 0; y += row + spacing; row = 0 }
-            x += size.width + spacing; row = max(row, size.height); widest = max(widest, x - spacing)
-        }
-        return CGSize(width: proposal.width ?? widest, height: y + row)
-    }
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var x = bounds.minX, y = bounds.minY, row: CGFloat = 0
-        for view in subviews {
-            var size = view.sizeThatFits(.unspecified)
-            size.width = min(size.width, bounds.width)
-            if x > bounds.minX, x + size.width > bounds.maxX { x = bounds.minX; y += row + spacing; row = 0 }
-            view.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
-            x += size.width + spacing; row = max(row, size.height)
-        }
-    }
-}
-
-struct VisualEffectBackground: NSViewRepresentable {
-    var material: NSVisualEffectView.Material = .sidebar
-    var blending: NSVisualEffectView.BlendingMode = .behindWindow
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = material; view.blendingMode = blending; view.state = .followsWindowActiveState
-        return view
-    }
-    func updateNSView(_ view: NSVisualEffectView, context: Context) {
-        view.material = material; view.blendingMode = blending
-    }
-}
-
-/// Empty toolbar and sidebar space under the transparent title bar still moves and zooms the window.
-struct WindowDragArea: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView { DragView() }
-    func updateNSView(_ nsView: NSView, context: Context) {}
-    private final class DragView: NSView {
-        override var mouseDownCanMoveWindow: Bool { true }
-        override func mouseDown(with event: NSEvent) {
-            if event.clickCount == 2 { window?.performZoom(nil) } else { window?.performDrag(with: event) }
-        }
-    }
-}
-
-/// One-line status strip under the toolbar.
-struct NoticeBar: View {
+/// Field label used in forms and fact grids.
+struct FieldLabel: View {
     let text: String
-    let symbol: String
-    let tint: Color
-    var actionTitle: String? = nil
-    var action: (() -> Void)? = nil
-    var dismiss: (() -> Void)? = nil
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Image(systemName: symbol).foregroundStyle(tint).accessibilityHidden(true)
-            Text(text).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-            Spacer(minLength: 8)
-            if let actionTitle, let action { Button(actionTitle, action: action).controlSize(.small) }
-            if let dismiss {
-                Button(action: dismiss) { Image(systemName: "xmark") }
-                    .buttonStyle(IconButtonStyle(size: 20)).help("Dismiss").accessibilityLabel("Dismiss")
-            }
-        }
-        .padding(.horizontal, 16).padding(.vertical, 8)
-        .background(tint.opacity(0.1))
-        .overlay(alignment: .bottom) { Divider() }
-    }
+    init(_ text: String) { self.text = text }
+    var body: some View { Text(text).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary) }
 }
