@@ -77,7 +77,7 @@ def main():
             if info.get(key) != expected:
                 raise SystemExit(f'Archive has unexpected {key}.')
         run('codesign', '--verify', '--deep', '--strict', '-R',
-            f'anchor apple generic and certificate leaf[subject.OU] = \"{team}\"', app)
+            f'=anchor apple generic and certificate leaf[subject.OU] = \"{team}\"', app)
         run('xcrun', 'stapler', 'validate', app)
         run('spctl', '--assess', '--type', 'execute', app)
     tools = ROOT / '.build/artifacts/sparkle/Sparkle/bin'
