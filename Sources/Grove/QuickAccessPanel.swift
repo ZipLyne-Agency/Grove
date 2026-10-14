@@ -1,7 +1,7 @@
 import SwiftUI
 import GroveCore
 
-/// The menu bar popover: search, pinned work, and the repository list in the persisted sort.
+/// The menu bar popover: search and the repository names in the persisted sort.
 struct QuickAccessPanel: View {
     let store: Store
     let send: (PopoverIntent) -> Void
@@ -15,20 +15,6 @@ struct QuickAccessPanel: View {
     private var libraryRepos: [GroveCore.Repository] {
         (store.inventory?.repositories ?? []).filter { !store.hiddenOwners.contains($0.owner.login) }
     }
-    private var terms: [String] { search.split(whereSeparator: \.isWhitespace).map(String.init) }
-    private var pinnedRepositories: [GroveCore.Repository] {
-        libraryRepos.filter { store.workspace.isRepositoryPinned($0.id) }
-            .filter { repo in terms.allSatisfy { repo.searchText.localizedCaseInsensitiveContains($0) } }
-    }
-    private var pinnedServices: [ServiceConnection] {
-        store.workspace.connections.filter { connection in
-            connection.pinned && terms.allSatisfy { term in
-                [connection.name, connection.provider.title, connection.resourceID].contains { $0.localizedCaseInsensitiveContains(term) }
-            }
-        }
-        .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-    }
-
     var body: some View {
         let matches = RepositoryQuery.filter(libraryRepos, scope: .all, owner: ownerFilter, search: search, sort: store.sort,
                                             descriptions: store.localDescriptions, integrationNames: store.localIntegrationNames)
@@ -40,7 +26,7 @@ struct QuickAccessPanel: View {
             } else {
                 notices
                 searchRow(rows)
-                if rows.isEmpty && pinnedServices.isEmpty && pinnedRepositories.isEmpty { noResults } else { list(rows, total: matches.count) }
+                if rows.isEmpty { noResults } else { list(rows, total: matches.count) }
             }
             Divider()
             footer(hasRows: !rows.isEmpty)
@@ -117,10 +103,10 @@ struct QuickAccessPanel: View {
         HStack(spacing: 6) {
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary).accessibilityHidden(true)
-                TextField("Search Repositories and Pinned", text: $search)
+                TextField("Search Repositories", text: $search)
                     .textFieldStyle(.plain)
                     .focused($searchFocused)
-                    .accessibilityLabel("Search Repositories and Pinned Items")
+                    .accessibilityLabel("Search Repositories")
                     .onSubmit { if let repo = target(in: rows) { send(.reveal(repo)) } }
                     .onKeyPress(.downArrow) { move(1, in: rows); return .handled }
                     .onKeyPress(.upArrow) { move(-1, in: rows); return .handled }
@@ -192,27 +178,12 @@ struct QuickAccessPanel: View {
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 1) {
-                    if !pinnedRepositories.isEmpty || !pinnedServices.isEmpty {
-                        sectionLabel("Pinned", trailing: nil)
-                        ForEach(pinnedRepositories) { repo in
-                            QuickAccessRow(repo: repo, description: store.workspace.profile(for: repo.id)?.summary, highlighted: false,
-                                           reveal: { send(.reveal(repo)) },
-                                           copy: { if let url = repo.webURL { Clipboard.copy(url.absoluteString); copied = "Copied Link" } },
-                                           open: { store.requestOpen(repo); send(.dismiss) },
-                                           ask: { send(.ask(repo)) })
-                        }
-                        ForEach(pinnedServices) { connection in
-                            PinnedServiceRow(connection: connection, look: ServiceLook(connection, syncing: store.workspace.syncing.contains(connection.id)),
-                                             copy: { Clipboard.copy(connection.dashboardURL); copied = "Copied \(connection.name) Link" },
-                                             open: { store.workspace.open(connection); send(.dismiss) })
-                        }
-                    }
                     if !rows.isEmpty {
                         sectionLabel(search.isEmpty ? store.sort.title : countLabel(total, "Match", "Matches"),
                                      trailing: total > rows.count ? "Showing \(rows.count) of \(total.formatted())" : nil)
                     }
                     ForEach(rows) { repo in
-                        QuickAccessRow(repo: repo, description: store.workspace.profile(for: repo.id)?.summary, highlighted: repo.id == active,
+                        QuickAccessRow(repo: repo, highlighted: repo.id == active,
                                        reveal: { send(.reveal(repo)) },
                                        copy: { if let url = repo.webURL { Clipboard.copy(url.absoluteString); copied = "Copied Link · \(repo.full_name)" } },
                                        open: { store.requestOpen(repo); send(.dismiss) },
