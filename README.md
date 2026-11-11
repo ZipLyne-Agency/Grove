@@ -14,7 +14,7 @@ Built with SwiftUI and AppKit. Signed in-app updates use Sparkle. Grove is indep
 - Scan nested manifests, deployment configuration and source files on the default branch. Overview highlights the repository and its integrations. Hide unused detections and restore them from Hidden Integrations.
 - Generate descriptions with optional on-device Apple Intelligence, with a labeled README or metadata fallback. Edit them locally without changing GitHub.
 - Automatic GitHub refresh after waking or reconnecting. Service providers are never polled.
-- Reviewed GitHub edits, archive, transfer, and deletion. Transfer and deletion require the exact repository name.
+- Reviewed GitHub edits, archive, and transfer. Transfer requires the exact repository name. Grove cannot delete repositories; do that on github.com.
 - Optional on-device Apple Intelligence for repository questions and change proposals.
 
 Service links are a reminder of what a repository uses. Grove does not track deployments, build completion, subscriptions, errors, or service health. No provider credentials or account setup are needed.

@@ -45,18 +45,17 @@ public struct Inventory: Codable, Sendable {
 }
 
 public enum RepositoryAction: Equatable, Sendable {
-    case rename(String), describe(String), transfer(String), archive(Bool), delete
+    case rename(String), describe(String), transfer(String), archive(Bool)
     public var title: String {
         switch self {
         case .rename: "Rename repository"
         case .describe: "Update description"
         case .transfer: "Transfer repository"
         case .archive(let value): value ? "Archive repository" : "Unarchive repository"
-        case .delete: "Delete repository"
         }
     }
     public var requiresTyping: Bool {
-        switch self { case .delete, .transfer: true; default: false }
+        if case .transfer = self { return true }; return false
     }
     public func validate(for repo: Repository, destinations: [String]) throws {
         guard repo.safeIdentity else { throw GroveError.invalidResponse }
@@ -71,7 +70,6 @@ public enum RepositoryAction: Equatable, Sendable {
                   destinations.contains(where: { $0.lowercased() == owner.lowercased() }) else { throw GroveError.invalidDestination }
         case .archive(let value):
             guard value != repo.archived else { throw GroveError.stalePreview }
-        case .delete: break
         }
     }
     public static func validComponent(_ value: String) -> Bool {
@@ -92,7 +90,6 @@ public struct ActionPreview: Identifiable, Sendable {
         case .describe(let value): value.isEmpty ? "No description" : value
         case .transfer(let owner): "\(owner)/\(repository.name)"
         case .archive(let value): value ? "Archived and read-only" : "Active"
-        case .delete: "Repository permanently removed from GitHub"
         }
     }
 }
@@ -108,7 +105,7 @@ public enum GroveError: Error, LocalizedError, Equatable {
         case .loginRequired: "GitHub could not authenticate. Check your GitHub CLI login in Terminal."
         case .commandFailed(let status):
             switch status {
-            case 403: "GitHub refused this operation (403). Check account permissions, organization policy, and token scopes. Deletion requires delete_repo."
+            case 403: "GitHub refused this operation (403). Check account permissions, organization policy, and token scopes."
             case 404: "GitHub could not find this repository (404). Refresh to check its current owner and name."
             case 409: "GitHub reported a conflict (409). Refresh and review the repository's current state."
             case 422: "GitHub rejected the proposed values (422). Check the name, description, destination, and organization restrictions."

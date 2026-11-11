@@ -8,19 +8,28 @@ import Testing
     #expect(result.status == 200)
     #expect(String(data: result.data, encoding: .utf8) == #"{"login":"demo-user"}"#)
 }
-@Test func parsesEmptyDeleteResponse() throws {
-    let result = try CLITransport.parse(Data("HTTP/2.0 204 No Content\nX-Test: value\n\n".utf8), method: "DELETE", exitCode: 0)
+@Test func parsesEmptyResponse() throws {
+    let result = try CLITransport.parse(Data("HTTP/2.0 204 No Content\nX-Test: value\n\n".utf8), method: "POST", exitCode: 0)
     #expect(result.status == 204)
     #expect(result.data.isEmpty)
 }
 @Test func separatesNetworkFailuresFromLoginFailures() throws {
     #expect(throws: GroveError.transportFailure) { try CLITransport.parse(Data(), method: "GET", exitCode: 1) }
-    #expect(throws: GroveError.outcomeUnknown) { try CLITransport.parse(Data(), method: "DELETE", exitCode: 1) }
+    #expect(throws: GroveError.outcomeUnknown) { try CLITransport.parse(Data(), method: "POST", exitCode: 1) }
     #expect(throws: GroveError.outcomeUnknown) { try CLITransport.parse(Data(), method: "PATCH", exitCode: 1) }
 }
 @Test func parsesHTTPErrorWithoutMisreportingSuccess() throws {
-    let result = try CLITransport.parse(Data("HTTP/2.0 403 Forbidden\n\n{\"message\":\"Forbidden\"}".utf8), method: "DELETE", exitCode: 1)
+    let result = try CLITransport.parse(Data("HTTP/2.0 403 Forbidden\n\n{\"message\":\"Forbidden\"}".utf8), method: "PATCH", exitCode: 1)
     #expect(result.status == 403)
+}
+@Test func deleteRequestsAreNeverSent() async throws {
+    let request = APIRequest(path: "repos/studio/project", method: "DELETE")
+    #expect(!GitHubRequestPolicy.permits(request))
+    #expect(!GitHubRequestPolicy.allowedMethods.contains("DELETE"))
+    await #expect(throws: GroveError.invalidResponse) { try await CLITransport().send(request) }
+    #expect(GitHubRequestPolicy.permits(APIRequest(path: "repos/studio/project", method: "PATCH")))
+    #expect(!GitHubRequestPolicy.permits(APIRequest(path: "/repos/studio/project")))
+    #expect(!GitHubRequestPolicy.permits(APIRequest(path: "https://example.com/repos")))
 }
 @Test func rejectsMalformedHTTPStatus() throws {
     #expect(throws: GroveError.invalidResponse) { try CLITransport.parse(Data("HTTP/wrong ABC\n\n{}".utf8), method: "GET", exitCode: 0) }

@@ -18,7 +18,6 @@ actor FakeTransport: GitHubTransport {
     var targetExists = false
     var failWrites = false
     var failedStatus = 403
-    var deleted = false
     init(repository: Repository) { self.repository = repository }
     func setLogin(_ value: String) { login = value }
     func setRepository(_ value: Repository) { repository = value }
@@ -31,10 +30,7 @@ actor FakeTransport: GitHubTransport {
         if request.path.hasPrefix("user/orgs") { return APIResponse(status: 200, data: Data(#"[{"login":"destination"}]"#.utf8)) }
         if request.path.hasPrefix("user/repos") { return APIResponse(status: 200, data: try JSONEncoder().encode([repository])) }
         if request.path == "repos/destination/project" { return APIResponse(status: targetExists ? 200 : 404, data: Data()) }
-        if request.method == "DELETE" {
-            if failWrites { return APIResponse(status: failedStatus, data: Data()) }
-            deleted = true; return APIResponse(status: 204, data: Data())
-        }
+        if request.method != "GET", failWrites { return APIResponse(status: failedStatus, data: Data()) }
         if request.method == "POST" { return APIResponse(status: 202, data: try JSONEncoder().encode(repository)) }
         if request.method == "PATCH" {
             let body = try JSONSerialization.jsonObject(with: request.body!) as! [String: Any]
@@ -42,27 +38,27 @@ actor FakeTransport: GitHubTransport {
                                      description: body["description"] as? String ?? repository.description,
                                      archived: body["archived"] as? Bool ?? repository.archived)
         }
-        return APIResponse(status: deleted ? 404 : 200, data: try JSONEncoder().encode(repository))
+        return APIResponse(status: 200, data: try JSONEncoder().encode(repository))
     }
 }
 
 @Test func preparingAndCancellingNeverWrites() async throws {
     let repo = try fixture(), mock = FakeTransport(repository: try fixture())
     let service = GitHubService(transport: mock)
-    let preview = try await service.prepare(repo: repo, action: .delete, inventory: inventory(repo))
+    let preview = try await service.prepare(repo: repo, action: .transfer("destination"), inventory: inventory(repo))
     #expect(await mock.requests.isEmpty)
     await service.cancel(preview.id)
     await #expect(throws: GroveError.expiredPreview) { try await service.approve(preview.id, typedName: repo.full_name) }
     #expect(await mock.writes.isEmpty)
 }
-@Test func deletionRequiresExactNameAndIsSingleUse() async throws {
+@Test func transferRequiresExactNameAndIsSingleUse() async throws {
     let repo = try fixture(), mock = FakeTransport(repository: try fixture())
     let service = GitHubService(transport: mock)
-    let preview = try await service.prepare(repo: repo, action: .delete, inventory: inventory(repo))
+    let preview = try await service.prepare(repo: repo, action: .transfer("destination"), inventory: inventory(repo))
     await #expect(throws: GroveError.confirmationRequired) { try await service.approve(preview.id, typedName: "project") }
     #expect(await mock.requests.isEmpty)
     let result = try await service.approve(preview.id, typedName: repo.full_name)
-    if case .verified = result {} else { Issue.record("Deletion was not verified") }
+    if case .transferRequested = result {} else { Issue.record("Transfer was not requested") }
     await #expect(throws: GroveError.expiredPreview) { try await service.approve(preview.id, typedName: repo.full_name) }
     #expect(await mock.writes.count == 1)
 }
@@ -93,8 +89,8 @@ actor FakeTransport: GitHubTransport {
 @Test func reusedPathWithDifferentIDBlocksWrite() async throws {
     let repo = try fixture(), mock = FakeTransport(repository: try fixture(id: 2))
     let service = GitHubService(transport: mock)
-    let preview = try await service.prepare(repo: repo, action: .delete, inventory: inventory(repo))
-    await #expect(throws: GroveError.stalePreview) { try await service.approve(preview.id, typedName: repo.full_name) }
+    let preview = try await service.prepare(repo: repo, action: .archive(true), inventory: inventory(repo))
+    await #expect(throws: GroveError.stalePreview) { try await service.approve(preview.id) }
     #expect(await mock.writes.isEmpty)
 }
 @Test func losingAdminBlocksWrite() async throws {
@@ -141,9 +137,9 @@ actor FakeTransport: GitHubTransport {
     let repo = try fixture(), mock = FakeTransport(repository: try fixture())
     await mock.setFailWrites()
     let service = GitHubService(transport: mock)
-    let preview = try await service.prepare(repo: repo, action: .delete, inventory: inventory(repo))
-    await #expect(throws: GroveError.commandFailed(403)) { try await service.approve(preview.id, typedName: repo.full_name) }
-    await #expect(throws: GroveError.expiredPreview) { try await service.approve(preview.id, typedName: repo.full_name) }
+    let preview = try await service.prepare(repo: repo, action: .archive(true), inventory: inventory(repo))
+    await #expect(throws: GroveError.commandFailed(403)) { try await service.approve(preview.id) }
+    await #expect(throws: GroveError.expiredPreview) { try await service.approve(preview.id) }
     #expect(await mock.writes.count == 1)
 }
 @Test func filteringFindsDescriptionsOwnersAndTopics() throws {
@@ -157,7 +153,20 @@ actor FakeTransport: GitHubTransport {
     let repo = try fixture(), mock = FakeTransport(repository: try fixture())
     await mock.setFailWrites(status: 503)
     let service = GitHubService(transport: mock)
-    let preview = try await service.prepare(repo: repo, action: .delete, inventory: inventory(repo))
-    await #expect(throws: GroveError.outcomeUnknown) { try await service.approve(preview.id, typedName: repo.full_name) }
+    let preview = try await service.prepare(repo: repo, action: .archive(true), inventory: inventory(repo))
+    await #expect(throws: GroveError.outcomeUnknown) { try await service.approve(preview.id) }
     #expect(await mock.writes.count == 1)
+}
+
+@Test func everyRepositoryChangeAvoidsDeleteRequests() async throws {
+    let actions: [RepositoryAction] = [.rename("renamed"), .describe("New"), .archive(true), .transfer("destination")]
+    for action in actions {
+        let repo = try fixture(), mock = FakeTransport(repository: try fixture())
+        let service = GitHubService(transport: mock)
+        let preview = try await service.prepare(repo: repo, action: action, inventory: inventory(repo))
+        _ = try await service.approve(preview.id, typedName: repo.full_name)
+        let writes = await mock.writes
+        #expect(writes.count == 1)
+        #expect(writes.allSatisfy { GitHubRequestPolicy.permits($0) })
+    }
 }

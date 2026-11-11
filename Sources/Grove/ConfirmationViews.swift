@@ -245,16 +245,15 @@ struct ConfirmationView: View {
     @Bindable var store: Store
     let preview: ActionPreview
     @State private var typedName = ""
-    private var deleting: Bool { preview.action == .delete }
     private var repo: Repository { preview.repository }
     private var matches: Bool { !preview.action.requiresTyping || typedName == repo.full_name }
     var body: some View {
-        SheetFrame(symbol: symbol, tint: deleting ? .danger : .grove, title: preview.action.displayTitle + "?",
+        SheetFrame(symbol: symbol, tint: .grove, title: preview.action.displayTitle + "?",
                    subtitle: "Signed in as \(preview.account)", width: 520) {
-            ValueBox(rows: rows, tint: deleting ? Color.danger : nil)
+            ValueBox(rows: rows, tint: nil)
             if let consequence {
                 Text(consequence).font(.system(size: 12.5))
-                    .foregroundStyle(deleting ? AnyShapeStyle(Color.danger) : AnyShapeStyle(.secondary))
+                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if preview.action.requiresTyping {
@@ -278,11 +277,11 @@ struct ConfirmationView: View {
             FinePrint("This review expires after five minutes. Grove checks the live repository before applying it.")
         } buttons: {
             Button("Cancel") { store.cancelPreview() }.keyboardShortcut(.cancelAction)
-            Button(confirmTitle, role: deleting ? .destructive : nil) {
+            Button(confirmTitle) {
                 store.confirmPreview(preview, typedName: typedName)
             }
             .buttonStyle(.borderedProminent)
-            .tint(deleting ? .danger : .grove)
+            .tint(.grove)
             .disabled(store.busy || store.operationInFlight || !matches)
         }
     }
@@ -292,7 +291,6 @@ struct ConfirmationView: View {
         case .describe: [("Repository", repo.full_name, true), ("Current", repo.hasDescription ? (repo.description ?? "") : "No description", false), ("New", preview.destination, false)]
         case .transfer: [("From", repo.full_name, true), ("To", preview.destination, true)]
         case .archive: [("Repository", repo.full_name, true), ("Result", preview.destination, false)]
-        case .delete: [("Repository", repo.full_name, true), ("Result", preview.destination, false)]
         }
     }
     private var consequence: String? {
@@ -301,7 +299,6 @@ struct ConfirmationView: View {
         case .describe: nil
         case .transfer: "The owner and address change. Access, integrations and organization rules may change too. GitHub finishes transfers in the background."
         case .archive(let archive): archive ? "The repository becomes read-only. You can unarchive it later." : "The repository becomes writable again."
-        case .delete: "Code, issues, pull requests and settings are deleted. Grove cannot undo this. Local clones are not affected."
         }
     }
     private var symbol: String {
@@ -310,7 +307,6 @@ struct ConfirmationView: View {
         case .describe: "text.alignleft"
         case .transfer: "arrow.right.arrow.left"
         case .archive: "archivebox"
-        case .delete: "trash"
         }
     }
     private var confirmTitle: String {
@@ -319,7 +315,6 @@ struct ConfirmationView: View {
         case .describe: "Update Description"
         case .transfer: "Transfer"
         case .archive(let archive): archive ? "Archive" : "Unarchive"
-        case .delete: "Delete Repository"
         }
     }
 }

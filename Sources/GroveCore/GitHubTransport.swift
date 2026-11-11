@@ -16,6 +16,15 @@ public struct APIResponse: Sendable {
 }
 public protocol GitHubTransport: Sendable { func send(_ request: APIRequest) async throws -> APIResponse }
 
+/// Methods Grove may send to GitHub. DELETE is absent on purpose: Grove never deletes anything on GitHub.
+/// Repository deletion belongs on github.com, behind GitHub's own re-authentication.
+public enum GitHubRequestPolicy {
+    public static let allowedMethods: Set<String> = ["GET", "PATCH", "POST"]
+    public static func permits(_ request: APIRequest) -> Bool {
+        allowedMethods.contains(request.method) && !request.path.hasPrefix("/") && !request.path.contains("://")
+    }
+}
+
 /// Fixed executable, no shell. A dedicated queue handles blocking pipe IO; cancellation stops its exact child.
 public struct CLITransport: GitHubTransport {
     public init() {}
@@ -63,10 +72,9 @@ private final class CLIRunner: @unchecked Sendable {
         }
     }
     func run(_ request: APIRequest) throws -> APIResponse {
+        guard GitHubRequestPolicy.permits(request) else { throw GroveError.invalidResponse }
         let paths = ["/opt/homebrew/bin/gh", "/usr/local/bin/gh", "/usr/bin/gh"]
         guard let binary = paths.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else { throw GroveError.missingCLI }
-        guard !request.path.hasPrefix("/"), !request.path.contains("://"),
-              ["GET", "PATCH", "POST", "DELETE"].contains(request.method) else { throw GroveError.invalidResponse }
         let child = Process()
         child.executableURL = URL(fileURLWithPath: binary)
         var args = ["api", "--hostname", "github.com", "--include", "--method", request.method,

@@ -69,14 +69,9 @@ struct RepositoryManageTab: View {
                     }
                 }
                 .buttonStyle(RowButtonStyle())
-                GroupedRows {
-                    Button { Task { await store.prepare(repo, action: .delete) } } label: { label("Delete Repository…", "trash") }
-                        .buttonStyle(RowButtonStyle(destructive: true))
-                }
-                .padding(.top, 6)
             }
             .disabled(reason != nil)
-            FinePrint("Each change opens a review before anything is sent to GitHub. Transfer and deletion ask for the full name.")
+            FinePrint("Each change opens a review before anything is sent to GitHub. Transfer asks for the full name.")
             SectionHeader("Grove").padding(.top, 14)
             GroupedRows {
                 Button { workspace.toggleRepositoryPin(repo.id) } label: {

@@ -63,7 +63,6 @@ public actor GitHubService {
         case .archive(let value): request = try Self.patch(path, ["archived": value])
         case .transfer(let owner):
             request = APIRequest(path: path + "/transfer", method: "POST", body: try JSONSerialization.data(withJSONObject: ["new_owner": owner]))
-        case .delete: request = APIRequest(path: path, method: "DELETE")
         }
         let result = try await transport.send(request)
         if result.status >= 500 || result.status == 408 { throw GroveError.outcomeUnknown }
@@ -71,10 +70,6 @@ public actor GitHubService {
         if case .transfer = preview.action { return .transferRequested }
         // Verify the observed result; a failed verification never causes an automatic write retry.
         do {
-            if case .delete = preview.action {
-                let check = try await transport.send(APIRequest(path: path))
-                return check.status == 404 ? .verified(nil) : .acceptedUnverified
-            }
             let resultPath: String
             if case .rename(let name) = preview.action { resultPath = "repos/\(repo.owner.login)/\(name)" } else { resultPath = path }
             let changed: Repository = try await get(resultPath)

@@ -117,7 +117,6 @@ extension RepositoryAction {
         case .describe: "Update Description"
         case .transfer: "Transfer Repository"
         case .archive(let value): value ? "Archive Repository" : "Unarchive Repository"
-        case .delete: "Delete Repository"
         }
     }
 }

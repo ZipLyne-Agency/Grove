@@ -224,7 +224,7 @@ struct AssistantView: View {
 
     private var presetList: [AssistantPreset] {
         if project != nil { return AssistantPresets.project }
-        if store.assistantFocus == .repository, let repo = store.selected { return AssistantPresets.repository(repo, includeDeletion: false) }
+        if store.assistantFocus == .repository, let repo = store.selected { return AssistantPresets.repository(repo) }
         return AssistantPresets.collection
     }
     private var presets: some View {
@@ -299,12 +299,11 @@ struct AssistantProposal: View {
     let store: Store
     let suggestion: AssistantSuggestion
     var body: some View {
-        let deleting = suggestion.action == .delete
         let blocked = !store.canStartReview || store.needsRefresh || !suggestion.repo.canAdminister
         VStack(alignment: .leading, spacing: 8) {
             Text("Suggested Change").font(.system(size: 11, weight: .semibold)).foregroundStyle(Color.ember)
             Text(suggestion.action.displayTitle).font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(deleting ? AnyShapeStyle(Color.danger) : AnyShapeStyle(.primary))
+                .foregroundStyle(.primary)
             Text(suggestion.repo.full_name).font(.system(size: 11.5, design: .monospaced)).foregroundStyle(.secondary)
                 .lineLimit(2).truncationMode(.middle)
             Text(detail).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
@@ -312,7 +311,7 @@ struct AssistantProposal: View {
                 Button("Dismiss") { store.suggestion = nil }
                 Spacer()
                 Button("Review Change…") { store.reviewSuggestion() }
-                    .buttonStyle(.borderedProminent).tint(deleting ? .danger : .grove)
+                    .buttonStyle(.borderedProminent).tint(.grove)
                     .disabled(blocked)
             }
             .controlSize(.small).padding(.top, 2)
@@ -331,7 +330,6 @@ struct AssistantProposal: View {
         case .describe(let text): text.isEmpty ? "Remove the description." : "“\(text)”"
         case .transfer(let owner): "To \(owner)/\(suggestion.repo.name)"
         case .archive(let archive): archive ? "Make the repository read-only." : "Make the repository writable again."
-        case .delete: "Permanently remove it from GitHub. The review asks for the full name."
         }
     }
 }

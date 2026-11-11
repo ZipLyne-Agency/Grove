@@ -26,7 +26,7 @@ private actor UncertainWrite: GitHubTransport {
     store.inventory = try sampleInventory(repo)
     await store.prepare(repo, action: .rename("first"))
     let id = try #require(store.preview?.id)
-    await store.prepare(repo, action: .delete)
+    await store.prepare(repo, action: .archive(true))
     #expect(store.preview?.id == id)
     #expect(store.preview?.action == .rename("first"))
     store.cancelPreview()
@@ -36,11 +36,11 @@ private actor UncertainWrite: GitHubTransport {
     let store = Store(service: GitHubService(transport: NoNetwork()), loadCache: false)
     store.inventory = try sampleInventory(repo)
     store.requestRefresh()
-    await store.prepare(repo, action: .delete)
+    await store.prepare(repo, action: .archive(true))
     #expect(store.preview == nil)
     await store.operationTask?.value
     store.requestEdit(repo, kind: .rename)
-    await store.prepare(repo, action: .delete)
+    await store.prepare(repo, action: .archive(true))
     #expect(store.preview == nil)
     #expect(store.editor?.kind == .rename)
 }
@@ -55,7 +55,7 @@ private actor UncertainWrite: GitHubTransport {
     let repo = try sampleRepository()
     let store = Store(service: GitHubService(transport: NoNetwork()), loadCache: false)
     store.inventory = try sampleInventory(repo, requiresRefresh: true)
-    await store.prepare(repo, action: .delete)
+    await store.prepare(repo, action: .archive(true))
     #expect(store.preview == nil)
     #expect(store.needsRefresh)
 }
@@ -74,13 +74,13 @@ private actor UncertainWrite: GitHubTransport {
     let persisted = await cache.load()
     #expect(persisted != nil, Comment(rawValue: store.message ?? "No store error"))
     #expect(persisted?.requiresRefresh == true)
-    await store.prepare(repo, action: .delete)
+    await store.prepare(repo, action: .archive(true))
     #expect(store.preview == nil)
 }
 @MainActor @Test func proposalNeverAutomaticallyOpensReview() throws {
     let repo = try sampleRepository()
     let store = Store(loadCache: false)
-    store.suggestion = AssistantSuggestion(repo: repo, action: .delete)
+    store.suggestion = AssistantSuggestion(repo: repo, action: .archive(true))
     #expect(store.preview == nil)
 }
 

@@ -37,8 +37,8 @@ struct AssistantPreset: Identifiable {
 
 enum AssistantPresets {
     /// Presets offered in the panel; the menu adds the deletion-related ones.
-    static func repository(_ repo: Repository, includeDeletion: Bool) -> [AssistantPreset] {
-        var presets = [
+    static func repository(_ repo: Repository) -> [AssistantPreset] {
+        [
             AssistantPreset(title: "Explain This Project", prompt: "Explain this project's purpose and technology in plain English.", symbol: "text.magnifyingglass"),
             AssistantPreset(title: "What Ships From This Repository?", prompt: "Summarize this repository's connected services. Say which are verified, out of date, failing, or only saved links.", symbol: "powerplug"),
             AssistantPreset(title: "Improve the Description", prompt: "Propose a clearer GitHub description for this repository.", symbol: "text.alignleft"),
@@ -48,11 +48,6 @@ enum AssistantPresets {
                 ? AssistantPreset(title: "Prepare Unarchive", prompt: "Propose unarchiving this repository.", symbol: "archivebox")
                 : AssistantPreset(title: "Prepare Archive", prompt: "Propose archiving this repository. Explain what archiving changes.", symbol: "archivebox")
         ]
-        if includeDeletion {
-            presets.append(AssistantPreset(title: "Review Before Deletion", prompt: "Explain what I should check before deleting this repository. Do not propose deletion.", symbol: "checklist"))
-            presets.append(AssistantPreset(title: "Prepare Deletion", prompt: "Propose deleting this repository. Explain the consequences and that separate exact-name confirmation is required.", symbol: "trash"))
-        }
-        return presets
     }
     static let project: [AssistantPreset] = [
         AssistantPreset(title: "What Needs Attention?", prompt: "What needs attention in this project? Use only the supplied service and repository records, and say which records are stale or unchecked.", symbol: "exclamationmark.triangle"),
@@ -73,7 +68,7 @@ struct IntelligenceMenu: View {
     var repo: Repository? = nil
     var owner: String? = nil
     var scope: LibraryScope = .all
-    private var presets: [AssistantPreset] { repo.map { AssistantPresets.repository($0, includeDeletion: true) } ?? AssistantPresets.collection }
+    private var presets: [AssistantPreset] { repo.map { AssistantPresets.repository($0) } ?? AssistantPresets.collection }
     var body: some View {
         Menu {
             ForEach(presets) { preset in
@@ -114,10 +109,6 @@ struct RepositoryMenu: View {
             Button { Task { await store.prepare(repo, action: .archive(!repo.archived)) } } label: {
                 Label(repo.archived ? "Unarchive…" : "Archive…", systemImage: "archivebox")
             }
-        }.disabled(manageDisabled)
-        Divider()
-        Button(role: .destructive) { Task { await store.prepare(repo, action: .delete) } } label: {
-            Label("Delete Repository…", systemImage: "trash")
         }.disabled(manageDisabled)
     }
 }

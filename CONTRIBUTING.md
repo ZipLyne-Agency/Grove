@@ -22,7 +22,7 @@ The debug-only `--keep-quick-access-open` argument keeps Quick Access open and a
 
 ## Preserve the approval contract
 
-Every GitHub change needs an explicit review. AI output can propose one change but cannot execute it. Keep approvals bound to immutable repository identity and a single preview, consumed once before asynchronous work. Preserve live account and permission checks, typed-name transfer and deletion confirmation, expiry, and the refresh requirement after an uncertain result.
+Every GitHub change needs an explicit review. AI output can propose one change but cannot execute it. Keep approvals bound to immutable repository identity and a single preview, consumed once before asynchronous work. Preserve live account and permission checks, typed-name transfer confirmation, expiry, and the refresh requirement after an uncertain result. Grove never deletes repositories: `GitHubRequestPolicy` refuses every DELETE request, and deletion stays on github.com behind GitHub's own re-authentication. Do not add it back.
 
 Services are saved names and HTTPS links. Do not add provider polling, status dashboards, or credential requirements to this flow. Repository scans must remain bounded, avoid environment/credential files, and treat model output as suggestions requiring review. Legacy provider adapters remain for compatibility; the application no longer polls them.
 
